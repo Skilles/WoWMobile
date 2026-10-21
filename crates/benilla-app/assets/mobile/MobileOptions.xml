@@ -65,8 +65,10 @@
         -- (BenillaOptionsFrame_UpdateScale) still caps it.
         BENILLA_ERA_WINDOW_SCALE = 1.25
 
-        -- A UI scale up to 160%: fingers are wider than a pointer.
+        -- A UI scale up to 160%: fingers are wider than a pointer. The 1.12 table's own top too, as
+        -- the Graphics page re-applies its bounds every time it shows.
         BENILLA_MOBILE_UI_SCALE_MAX = 1.6
+        OptionsFrameSliders[1].maxValue = BENILLA_MOBILE_UI_SCALE_MAX
         BenillaOptionsSliderRow_Setup(BenillaOptionsFrameContainerBodyGraphicsRowUiScale,
             OptionsFrameSliders[1].minValue, BENILLA_MOBILE_UI_SCALE_MAX,
             OptionsFrameSliders[1].valueStep)

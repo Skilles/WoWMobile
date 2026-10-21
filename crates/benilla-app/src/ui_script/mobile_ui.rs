@@ -280,6 +280,13 @@ mod tests {
         )
         .unwrap();
         assert!(s.errors().is_empty(), "on page: {:?}", s.errors());
+        // The Graphics page re-applies the 1.12 slider table's bounds as it shows.
+        let (_, max): (f32, f32) = s
+            .eval(
+                "return BenillaOptionsFrameContainerBodyGraphicsRowUiScaleControlSlider                 :GetMinMaxValues()",
+            )
+            .unwrap();
+        benilla_ui::assert_near!(max, 1.6, "the UI scale slider's top, the page shown");
         assert!(s
             .eval::<bool>(
                 "return BenillaOptionsFrameContainerBodyGraphicsRowVerticalSyncCheck:IsEnabled()                  ~= 1"
