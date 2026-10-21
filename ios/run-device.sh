@@ -95,10 +95,10 @@ fi
 
 if [[ $launch == 1 ]]; then
     # RUST_LOG, when set, reaches the app (and so the remote console's `log`).
-    env_json="{}"
+    env_args=()
     if [[ -n "${RUST_LOG:-}" ]]; then
-        env_json="{\"RUST_LOG\":\"$RUST_LOG\"}"
+        env_args=(--environment-variables "{\"RUST_LOG\":\"$RUST_LOG\"}")
     fi
     xcrun devicectl device process launch --device "$DEVICE" --terminate-existing \
-        --environment-variables "$env_json" "$BUNDLE_ID"
+        "${env_args[@]}" "$BUNDLE_ID"
 fi
