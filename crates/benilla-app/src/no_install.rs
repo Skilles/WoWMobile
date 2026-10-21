@@ -73,6 +73,9 @@ fn message(looked_in: &[PathBuf]) -> String {
 /// is `unattended`, so an instrumented run never waits on a click.
 pub(crate) fn fail(err: &NoInstall, unattended: bool) -> AppExit {
     eprintln!("benilla: {}", err.message());
+    #[cfg(target_os = "ios")]
+    let _ = unattended;
+    #[cfg(not(target_os = "ios"))]
     if !unattended {
         // Linux shows it through `zenity` and logs nothing when that is missing, which stderr covers.
         rfd::MessageDialog::new()

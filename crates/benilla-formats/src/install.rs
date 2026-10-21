@@ -5,6 +5,8 @@
 //!    no-install path runs on a machine that has one.
 //! 2. `<project folder>/WoW/Data`, `dev` builds only ([`project_folder`]).
 //! 3. `<exe dir>/Data`, then `<exe dir>/WoW/Data`, the release layouts.
+//! 4. iOS only: `<app container>/Documents/Data`, where the Files app and Finder put it (the
+//!    bundle itself is read-only and replaced on every install).
 //!
 //! `dev` is a default feature here, so every dependent declares `default-features = false` and
 //! re-exports it; otherwise feature unification puts the source-tree path in a player build.
@@ -97,7 +99,21 @@ fn candidates_from(
         out.push(dir.join("WoW/Data"));
     }
 
+    // 4. The app's Documents folder on iOS, `$HOME` being the app container there.
+    if let Some(docs) = ios_documents() {
+        out.push(docs.join("Data"));
+    }
+
     out
+}
+
+/// The app container's `Documents/` on iOS, where a user can copy files in; `None` elsewhere.
+pub fn ios_documents() -> Option<PathBuf> {
+    if cfg!(target_os = "ios") {
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Documents"))
+    } else {
+        None
+    }
 }
 
 /// The install, or skip this test: `wow_data_or_skip!()` in a `-> ()` test,

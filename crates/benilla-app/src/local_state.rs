@@ -11,7 +11,8 @@
 //!    launcher's): a shipped binary must not carry the build machine's source tree. A linked
 //!    worktree resolves to its primary checkout's folder, unless it declares its own probe account
 //!    ([`shared_root`]).
-//! 4. `<exe dir>/benilla-config/`.
+//! 4. `<exe dir>/benilla-config/`; on iOS `<app container>/Documents/benilla-config/`, since the
+//!    app bundle is read-only.
 //!
 //! With `$WOW_CAPTURE` set every path resolves to `None`: a capture neither reads nor writes
 //! player state.
@@ -61,6 +62,10 @@ fn run_home_in(temp: &Path, pid: u32) -> PathBuf {
 
 /// Steps 3 and 4 of [`home`]: the folder the build itself lives in.
 fn resident_home() -> Option<PathBuf> {
+    // iOS: the bundle is read-only, and a dev build's project folder is on the build machine.
+    if let Some(docs) = benilla_formats::ios_documents() {
+        return Some(docs.join(STATE_DIR));
+    }
     // 3 · the project folder, dev builds only.
     if let Some(root) = dev_project_root() {
         return Some(root.join(STATE_DIR));

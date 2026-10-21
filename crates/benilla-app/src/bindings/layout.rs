@@ -124,7 +124,12 @@ impl LayoutNames {
         })
     }
 
-    /// Set what the layout names `key`; `None` clears it back to the US name.
+    /// Set what the layout names `key`; `None` clears it back to the US name. Only the desktop
+    /// layout readers below call it.
+    #[cfg_attr(
+        not(any(target_os = "windows", target_os = "macos", target_os = "linux")),
+        allow(dead_code)
+    )]
     pub(crate) fn set(&mut self, key: KeyCode, name: Option<LayoutName>) {
         match name {
             Some(name) => self.0.insert(key, name),
