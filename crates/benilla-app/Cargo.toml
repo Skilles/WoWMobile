@@ -83,9 +83,13 @@ rand = "0.8"
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 
-# The remembered login on iOS (`glue_session::remembered`), in the Keychain.
+# The mobile fork on iOS: the launcher's passwords in the Keychain (`mobile::launcher`), and game
+# controllers through the GameController framework (`mobile::gamepad`).
 [target.'cfg(target_os = "ios")'.dependencies]
 security-framework = "3"
+objc2 = { version = "0.6", features = ["exception"] }
+objc2-foundation = "0.3"
+objc2-game-controller = "0.3"
 
 # Wayland clipboard over the standard `wl_data_device`; arboard's speaks `wlr-data-control`,
 # which GNOME does not implement.

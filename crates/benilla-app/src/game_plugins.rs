@@ -1704,6 +1704,8 @@ pub(crate) mod schedule_tests {
     /// Every one-shot VM consumer not gated on `ingame_ui_up` (read off the schedule) and not a
     /// memo-diffed `fire_event`, keyed `(path under src/, fn)`, with the reason it is safe.
     const EXEMPT: &[(&str, &str, Because, &str)] = &[
+        ("mobile/gamepad.rs", "serve_pad_lua", Because::Deliberate,
+         "the controller's commands and state wait for a VM: with none up, the queue is kept for the next frame, and a new VM (the world's, a reload) is sent the binding table and the pad's state again, keyed on its session"),
         ("mobile/console.rs", "serve_lua", Because::Deliberate,
          "the remote console answers each Lua request with whatever VM holds the screen, the glue's or the world's; a request in the frame before an interface exists is answered `no interface loaded`, not lost"),
         ("bindings.rs", "sync_dispatch", Because::MemoLatched,

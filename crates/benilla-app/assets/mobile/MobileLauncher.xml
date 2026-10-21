@@ -98,20 +98,22 @@
             else
                 ConsoleExec("mobileRealmOverride -")
             end
-            AccountLoginAccountEdit:SetText(user)
-            AccountLoginPasswordEdit:SetText(pass)
-            -- The realmlist write lands at the next CVar flush; the login reads it then.
-            BenillaLauncher.pendingLogin = 2
+            -- Held here, not in the stock boxes: AccountLogin's own OnShow, which runs after
+            -- ours, puts the saved account name back in its box.
+            BenillaLauncher.pending = { user = user, pass = pass, frames = 2 }
         end
 
+        -- The realmlist write lands at the next CVar flush; the login dials it then, as
+        -- AccountLogin_Login would with the boxes filled.
         function BenillaLauncherFrame_OnUpdate()
-            if BenillaLauncher.pendingLogin then
-                BenillaLauncher.pendingLogin = BenillaLauncher.pendingLogin - 1
-                if BenillaLauncher.pendingLogin <= 0 then
-                    BenillaLauncher.pendingLogin = nil
-                    AccountLogin_Login()
-                end
-            end
+            local p = BenillaLauncher.pending
+            if not p then return end
+            p.frames = p.frames - 1
+            if p.frames > 0 then return end
+            BenillaLauncher.pending = nil
+            AccountLoginAccountEdit:SetText(p.user)
+            DefaultServerLogin(p.user, p.pass)
+            AccountLoginPasswordEdit:SetText("")
         end
 
         function BenillaLauncherFrame_OnShow()
@@ -398,6 +400,34 @@
             <OnLoad>this:SetScale(1.25)</OnLoad>
             <OnShow>BenillaLauncherFrame_OnShow()</OnShow>
             <OnUpdate>BenillaLauncherFrame_OnUpdate()</OnUpdate>
+        </Scripts>
+    </Frame>
+
+    <!-- A controller's cursor on the glue screens (iOS draws no pointer). -->
+    <Frame name="BenillaLauncherPadCursor" parent="GlueParent" frameStrata="TOOLTIP">
+        <Size><AbsDimension x="32" y="32"/></Size>
+        <Anchors><Anchor point="CENTER"/></Anchors>
+        <Layers>
+            <Layer level="OVERLAY">
+                <Texture name="$parentArrow" file="Interface\Cursor\Point" hidden="true">
+                    <Size><AbsDimension x="32" y="32"/></Size>
+                    <Anchors><Anchor point="TOPLEFT"/></Anchors>
+                </Texture>
+            </Layer>
+        </Layers>
+        <Scripts>
+            <OnUpdate>
+                local arrow = BenillaLauncherPadCursorArrow
+                if not BENILLA_PAD_CURSOR then
+                    if arrow:IsShown() then arrow:Hide() end
+                    return
+                end
+                arrow:Show()
+                local x, y = GetCursorPosition()
+                local s = GlueParent:GetEffectiveScale()
+                this:ClearAllPoints()
+                this:SetPoint("TOPLEFT", GlueParent, "BOTTOMLEFT", x / s, y / s)
+            </OnUpdate>
         </Scripts>
     </Frame>
 

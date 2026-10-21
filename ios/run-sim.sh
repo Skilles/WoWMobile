@@ -58,7 +58,7 @@ if [[ -n "${WOW_HOST:-}" ]]; then
     export SIMCTL_CHILD_WOW_HOST="$WOW_HOST"
 fi
 export SIMCTL_CHILD_RUST_BACKTRACE=1
-for var in BENILLA_CONSOLE BENILLA_CONSOLE_TOKEN; do
+for var in BENILLA_CONSOLE BENILLA_CONSOLE_TOKEN BENILLA_VIRTUAL_PAD; do
     if [[ -n "${!var:-}" ]]; then
         export "SIMCTL_CHILD_$var=${!var}"
     fi

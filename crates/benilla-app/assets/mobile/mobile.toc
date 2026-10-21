@@ -8,3 +8,5 @@ MobileOptions.xml
 # The touch controls: the jump ring, the menu button and its radial menu, the views and the layout
 # editor.
 MobileControls.xml
+# The game controller's cursor, layer bindings and Controller Buttons screen.
+MobilePad.xml

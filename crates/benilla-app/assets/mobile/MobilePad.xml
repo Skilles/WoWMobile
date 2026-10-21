@@ -1,0 +1,348 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+    <!-- The game controller's interface (crates/benilla-app/src/mobile/gamepad.rs): the virtual
+         cursor (iOS draws no pointer), the layer's bindings while a trigger is held, which windows
+         want the cursor, and the Controller Buttons screen that remaps the 32 layered bindings
+         (mobileGamepadBindings). The host publishes BENILLA_PAD_CONNECTED, BENILLA_PAD_LAYER,
+         BENILLA_PAD_CURSOR and the effective table, BENILLA_PAD_BINDINGS. -->
+    <Script><![CDATA[
+        BENILLA_PAD_FACE = { "A", "B", "X", "Y", "U", "R", "D", "L" }
+        BENILLA_PAD_FACE_LABEL = { A = "A", B = "B", X = "X", Y = "Y", U = "Up", R = "Right", D = "Down", L = "Left" }
+        BENILLA_PAD_LAYER_LABEL = { [0] = "No Trigger", [1] = "LT", [2] = "RT", [3] = "LT + RT" }
+
+        -- Windows a pointer is for: the cursor opens while one is up.
+        BENILLA_PAD_CURSOR_FRAMES = {
+            "LootFrame", "MerchantFrame", "QuestFrame", "GossipFrame", "BankFrame", "MailFrame",
+            "OpenMailFrame", "ClassTrainerFrame", "TaxiFrame", "TradeFrame", "AuctionFrame",
+            "ItemTextFrame", "PetitionFrame", "TabardFrame", "GuildRegistrarFrame", "TradeSkillFrame",
+            "CraftFrame", "StaticPopup1", "StaticPopup2", "GameMenuFrame", "BenillaOptionsFrame",
+            "CharacterFrame", "SpellBookFrame", "QuestLogFrame", "FriendsFrame", "WorldMapFrame",
+            "TalentFrame", "ContainerFrame1", "DressUpFrame", "BenillaMobileRadial",
+            "BenillaMobileEditor", "BenillaMobilePadBindings", "GroupLootFrame1",
+        }
+
+        function BenillaMobilePad_WantsCursor()
+            for _, name in ipairs(BENILLA_PAD_CURSOR_FRAMES) do
+                local f = getglobal(name)
+                if f and f:IsVisible() then return 1 end
+            end
+            return nil
+        end
+
+        -- Run a command of the touch controls' table by key (the host's Ui command).
+        function BenillaMobile_RunCommand(key)
+            local c = BENILLA_MOBILE_COMMAND and BENILLA_MOBILE_COMMAND[key]
+            if c then c.run() end
+        end
+
+        -- The table as [layer][button] = command text.
+        function BenillaMobilePad_ParseBindings(text)
+            local t = { [0] = {}, [1] = {}, [2] = {}, [3] = {} }
+            for layer, button, command in string.gfind(text or "", "(%d)(%a)=([%w]+);") do
+                t[tonumber(layer)][button] = command
+            end
+            return t
+        end
+
+        function BenillaMobilePad_Serialize(t)
+            local out = ""
+            for layer = 0, 3 do
+                for _, b in ipairs(BENILLA_PAD_FACE) do
+                    out = out .. layer .. b .. "=" .. (t[layer][b] or "none") .. ";"
+                end
+            end
+            return out
+        end
+
+        -- A command's icon and words.
+        function BenillaMobilePad_Describe(command)
+            if not command or command == "none" then return nil, "-" end
+            if command == "jump" then return "Interface\\Icons\\Ability_Rogue_Sprint", "Jump" end
+            if command == "cursor" then return "Interface\\Icons\\INV_Misc_Spyglass_02", "Cursor" end
+            if command == "radial" then return "Interface\\Icons\\INV_Misc_Gear_01", "Menu" end
+            local _, _, n = string.find(command, "^a(%d+)$")
+            if n then return GetActionTexture(tonumber(n)), "Action " .. n end
+            local c = BENILLA_MOBILE_COMMAND and BENILLA_MOBILE_COMMAND[command]
+            if c then return c.icon, c.label end
+            return nil, command
+        end
+
+        -- ── The layer's bindings, while a trigger is held ──
+        function BenillaMobilePadHud_Update()
+            local layer = BENILLA_PAD_LAYER or 0
+            if not BENILLA_PAD_CONNECTED or layer == 0 then
+                BenillaMobilePadHud:Hide()
+                return
+            end
+            local t = BenillaMobilePad_ParseBindings(BENILLA_PAD_BINDINGS)
+            BenillaMobilePadHudTitle:SetText(BENILLA_PAD_LAYER_LABEL[layer])
+            for i, b in ipairs(BENILLA_PAD_FACE) do
+                local icon, text = BenillaMobilePad_Describe(t[layer][b])
+                getglobal("BenillaMobilePadHudSlot" .. i .. "Icon"):SetTexture(icon)
+                getglobal("BenillaMobilePadHudSlot" .. i .. "Label"):SetText(BENILLA_PAD_FACE_LABEL[b])
+            end
+            BenillaMobilePadHud:Show()
+        end
+
+        -- Face buttons in a diamond on the right, the d-pad in a cross on the left.
+        BENILLA_PAD_HUD_SPOTS = {
+            { 90, -50 }, { 140, 0 }, { 40, 0 }, { 90, 50 },
+            { -90, 50 }, { -40, 0 }, { -90, -50 }, { -140, 0 },
+        }
+
+        -- ── The Controller Buttons screen ──
+        BENILLA_PAD_TYPES = { "action", "jump", "cursor", "radial", "command", "none" }
+
+        function BenillaMobilePad_ShowBindings()
+            BenillaMobilePadBindings.table = BenillaMobilePad_ParseBindings(BENILLA_PAD_BINDINGS)
+            BenillaMobilePadBindings.layer, BenillaMobilePadBindings.button = 0, "A"
+            BenillaMobilePadBindings:Show()
+            BenillaMobilePadBindings_Refresh()
+        end
+
+        function BenillaMobilePadBindings_Refresh()
+            local f = BenillaMobilePadBindings
+            for layer = 0, 3 do
+                for i, b in ipairs(BENILLA_PAD_FACE) do
+                    local cell = getglobal("BenillaMobilePadBindingsCell" .. layer .. i)
+                    local icon, text = BenillaMobilePad_Describe(f.table[layer][b])
+                    getglobal(cell:GetName() .. "Icon"):SetTexture(icon)
+                    getglobal(cell:GetName() .. "Text"):SetText(BENILLA_PAD_FACE_LABEL[b] .. ": " .. text)
+                    if layer == f.layer and b == f.button then cell:LockHighlight() else cell:UnlockHighlight() end
+                end
+            end
+            local _, text = BenillaMobilePad_Describe(f.table[f.layer][f.button])
+            BenillaMobilePadBindingsSelected:SetText(BENILLA_PAD_LAYER_LABEL[f.layer] .. " + "
+                .. BENILLA_PAD_FACE_LABEL[f.button] .. ": " .. text)
+        end
+
+        function BenillaMobilePadBindings_Kind(command)
+            if not command or command == "none" then return "none" end
+            if command == "jump" or command == "cursor" or command == "radial" then return command end
+            if string.find(command, "^a%d+$") then return "action" end
+            return "command"
+        end
+
+        -- The selected binding to the next kind of command.
+        function BenillaMobilePadBindings_NextType()
+            local f = BenillaMobilePadBindings
+            local kind = BenillaMobilePadBindings_Kind(f.table[f.layer][f.button])
+            local n = table.getn(BENILLA_PAD_TYPES)
+            for i, t in ipairs(BENILLA_PAD_TYPES) do
+                if t == kind then kind = BENILLA_PAD_TYPES[math.mod(i, n) + 1] break end
+            end
+            local value = kind
+            if kind == "action" then value = "a1" end
+            if kind == "command" then value = BENILLA_MOBILE_COMMANDS[1].key end
+            f.table[f.layer][f.button] = value
+            BenillaMobilePadBindings_Refresh()
+        end
+
+        -- The selected binding's value up or down: the action slot, or the command in the list.
+        function BenillaMobilePadBindings_Step(by)
+            local f = BenillaMobilePadBindings
+            local command = f.table[f.layer][f.button]
+            local kind = BenillaMobilePadBindings_Kind(command)
+            if kind == "action" then
+                local _, _, digits = string.find(command, "^a(%d+)$")
+                local n = tonumber(digits) + by
+                if n < 1 then n = 120 end
+                if n > 120 then n = 1 end
+                f.table[f.layer][f.button] = "a" .. n
+            elseif kind == "command" then
+                local count = table.getn(BENILLA_MOBILE_COMMANDS)
+                for i, c in ipairs(BENILLA_MOBILE_COMMANDS) do
+                    if c.key == command then
+                        local j = math.mod(i - 1 + by + count, count) + 1
+                        f.table[f.layer][f.button] = BENILLA_MOBILE_COMMANDS[j].key
+                        break
+                    end
+                end
+            end
+            BenillaMobilePadBindings_Refresh()
+        end
+
+        function BenillaMobilePadBindings_Save()
+            SetCVar("mobileGamepadBindings", BenillaMobilePad_Serialize(BenillaMobilePadBindings.table))
+            BenillaMobilePadBindings:Hide()
+        end
+
+        function BenillaMobilePadBindings_Reset()
+            SetCVar("mobileGamepadBindings", "")
+            BenillaMobilePadBindings:Hide()
+        end
+    ]]></Script>
+
+    <!-- The virtual cursor: iOS draws no pointer. -->
+    <Frame name="BenillaMobilePadCursor" parent="UIParent" frameStrata="TOOLTIP" hidden="false">
+        <Size><AbsDimension x="32" y="32"/></Size>
+        <Anchors><Anchor point="CENTER"/></Anchors>
+        <Layers>
+            <Layer level="OVERLAY">
+                <Texture name="$parentArrow" file="Interface\Cursor\Point">
+                    <Size><AbsDimension x="32" y="32"/></Size>
+                    <Anchors><Anchor point="TOPLEFT"/></Anchors>
+                </Texture>
+            </Layer>
+        </Layers>
+        <Scripts>
+            <OnUpdate>
+                local arrow = BenillaMobilePadCursorArrow
+                if not BENILLA_PAD_CURSOR then
+                    if arrow:IsShown() then arrow:Hide() end
+                    BenillaMobilePadHud_Update()
+                    return
+                end
+                arrow:Show()
+                local x, y = GetCursorPosition()
+                local s = UIParent:GetEffectiveScale()
+                this:ClearAllPoints()
+                this:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / s, y / s)
+                BenillaMobilePadHud_Update()
+            </OnUpdate>
+        </Scripts>
+    </Frame>
+
+    <!-- The layer's eight bindings while a trigger is held. -->
+    <Button name="BenillaMobilePadHudSlotTemplate" virtual="true">
+        <Size><AbsDimension x="44" y="44"/></Size>
+        <Layers>
+            <Layer level="ARTWORK">
+                <Texture name="$parentIcon"><Size><AbsDimension x="40" y="40"/></Size><Anchors><Anchor point="CENTER"/></Anchors></Texture>
+            </Layer>
+            <Layer level="OVERLAY">
+                <FontString name="$parentLabel" inherits="NumberFontNormalSmall">
+                    <Anchors><Anchor point="BOTTOMRIGHT"><Offset><AbsDimension x="-2" y="2"/></Offset></Anchor></Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+    </Button>
+    <Frame name="BenillaMobilePadHud" parent="UIParent" frameStrata="HIGH" hidden="true">
+        <Size><AbsDimension x="360" y="140"/></Size>
+        <Anchors><Anchor point="BOTTOM"><Offset><AbsDimension x="0" y="150"/></Offset></Anchor></Anchors>
+        <Layers>
+            <Layer level="BACKGROUND">
+                <Texture setAllPoints="true"><Color r="0" g="0" b="0" a="0.45"/></Texture>
+            </Layer>
+            <Layer level="ARTWORK">
+                <FontString name="BenillaMobilePadHudTitle" inherits="GameFontNormal">
+                    <Anchors><Anchor point="TOP"><Offset><AbsDimension x="0" y="-4"/></Offset></Anchor></Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        <Frames>
+            <Button name="BenillaMobilePadHudSlot1" inherits="BenillaMobilePadHudSlotTemplate"/>
+            <Button name="BenillaMobilePadHudSlot2" inherits="BenillaMobilePadHudSlotTemplate"/>
+            <Button name="BenillaMobilePadHudSlot3" inherits="BenillaMobilePadHudSlotTemplate"/>
+            <Button name="BenillaMobilePadHudSlot4" inherits="BenillaMobilePadHudSlotTemplate"/>
+            <Button name="BenillaMobilePadHudSlot5" inherits="BenillaMobilePadHudSlotTemplate"/>
+            <Button name="BenillaMobilePadHudSlot6" inherits="BenillaMobilePadHudSlotTemplate"/>
+            <Button name="BenillaMobilePadHudSlot7" inherits="BenillaMobilePadHudSlotTemplate"/>
+            <Button name="BenillaMobilePadHudSlot8" inherits="BenillaMobilePadHudSlotTemplate"/>
+        </Frames>
+        <Scripts>
+            <OnLoad>
+                for i = 1, 8 do
+                    local spot = BENILLA_PAD_HUD_SPOTS[i]
+                    local b = getglobal("BenillaMobilePadHudSlot" .. i)
+                    b:ClearAllPoints()
+                    b:SetPoint("CENTER", this, "CENTER", spot[1], spot[2] - 8)
+                end
+            </OnLoad>
+        </Scripts>
+    </Frame>
+
+    <!-- The Controller Buttons screen: a column per layer, a row per button. -->
+    <Button name="BenillaMobilePadCellTemplate" virtual="true">
+        <Size><AbsDimension x="190" y="30"/></Size>
+        <Layers>
+            <Layer level="ARTWORK">
+                <Texture name="$parentIcon"><Size><AbsDimension x="26" y="26"/></Size><Anchors><Anchor point="LEFT"><Offset><AbsDimension x="2" y="0"/></Offset></Anchor></Anchors></Texture>
+                <FontString name="$parentText" inherits="GameFontHighlightSmall" justifyH="LEFT">
+                    <Size><AbsDimension x="156" y="26"/></Size>
+                    <Anchors><Anchor point="LEFT"><Offset><AbsDimension x="32" y="0"/></Offset></Anchor></Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        <HighlightTexture file="Interface\Buttons\UI-Listbox-Highlight" alphaMode="ADD"/>
+        <Scripts>
+            <OnClick>
+                BenillaMobilePadBindings.layer = this.layer
+                BenillaMobilePadBindings.button = this.button
+                BenillaMobilePadBindings_Refresh()
+            </OnClick>
+        </Scripts>
+    </Button>
+    <Frame name="BenillaMobilePadBindings" parent="UIParent" frameStrata="DIALOG" toplevel="true" enableMouse="true" hidden="true">
+        <Size><AbsDimension x="820" y="420"/></Size>
+        <Anchors><Anchor point="CENTER"/></Anchors>
+        <Backdrop bgFile="Interface\DialogFrame\UI-DialogBox-Background" edgeFile="Interface\DialogFrame\UI-DialogBox-Border" tile="true">
+            <BackgroundInsets><AbsInset left="11" right="12" top="12" bottom="11"/></BackgroundInsets>
+            <TileSize><AbsValue val="32"/></TileSize>
+            <EdgeSize><AbsValue val="32"/></EdgeSize>
+        </Backdrop>
+        <Layers>
+            <Layer level="ARTWORK">
+                <FontString inherits="GameFontNormalLarge" text="Controller Buttons">
+                    <Anchors><Anchor point="TOP"><Offset><AbsDimension x="0" y="-18"/></Offset></Anchor></Anchors>
+                </FontString>
+                <FontString name="BenillaMobilePadBindingsSelected" inherits="GameFontHighlight" justifyH="LEFT">
+                    <Size><AbsDimension x="300" y="20"/></Size>
+                    <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="24" y="26"/></Offset></Anchor></Anchors>
+                </FontString>
+                <FontString inherits="GameFontNormalSmall" justifyH="LEFT"
+                    text="Left stick moves, right stick looks, LB/RB cycle targets, Menu opens the menu, View the game menu, L3 autoruns, R3 the cursor.">
+                    <Size><AbsDimension x="770" y="14"/></Size>
+                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="24" y="-44"/></Offset></Anchor></Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        <Frames>
+            <Button name="BenillaMobilePadBindingsType" inherits="UIPanelButtonTemplate" text="Type">
+                <Size><AbsDimension x="90" y="28"/></Size>
+                <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="330" y="20"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaMobilePadBindings_NextType()</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaMobilePadBindingsPrev" inherits="UIPanelButtonTemplate" text="&lt;">
+                <Size><AbsDimension x="44" y="28"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaMobilePadBindingsType" relativePoint="RIGHT"/></Anchors>
+                <Scripts><OnClick>BenillaMobilePadBindings_Step(-1)</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaMobilePadBindingsNext" inherits="UIPanelButtonTemplate" text="&gt;">
+                <Size><AbsDimension x="44" y="28"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaMobilePadBindingsPrev" relativePoint="RIGHT"/></Anchors>
+                <Scripts><OnClick>BenillaMobilePadBindings_Step(1)</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaMobilePadBindingsReset" inherits="UIPanelButtonTemplate" text="Defaults">
+                <Size><AbsDimension x="90" y="28"/></Size>
+                <Anchors><Anchor point="BOTTOMRIGHT"><Offset><AbsDimension x="-200" y="20"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaMobilePadBindings_Reset()</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaMobilePadBindingsCancel" inherits="UIPanelButtonTemplate" text="Cancel">
+                <Size><AbsDimension x="80" y="28"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaMobilePadBindingsReset" relativePoint="RIGHT"/></Anchors>
+                <Scripts><OnClick>BenillaMobilePadBindings:Hide()</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaMobilePadBindingsSave" inherits="UIPanelButtonTemplate" text="Save">
+                <Size><AbsDimension x="80" y="28"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaMobilePadBindingsCancel" relativePoint="RIGHT"/></Anchors>
+                <Scripts><OnClick>BenillaMobilePadBindings_Save()</OnClick></Scripts>
+            </Button>
+        </Frames>
+        <Scripts>
+            <OnLoad>
+                tinsert(UISpecialFrames, this:GetName())
+                for layer = 0, 3 do
+                    local head = this:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+                    head:SetText(BENILLA_PAD_LAYER_LABEL[layer])
+                    head:SetPoint("TOPLEFT", this, "TOPLEFT", 24 + layer * 196, -64)
+                    for i, b in ipairs(BENILLA_PAD_FACE) do
+                        local cell = CreateFrame("Button", "BenillaMobilePadBindingsCell" .. layer .. i, this,
+                            "BenillaMobilePadCellTemplate")
+                        cell.layer, cell.button = layer, b
+                        cell:SetPoint("TOPLEFT", this, "TOPLEFT", 20 + layer * 196, -82 - (i - 1) * 34)
+                    end
+                end
+            </OnLoad>
+        </Scripts>
+    </Frame>
+</Ui>

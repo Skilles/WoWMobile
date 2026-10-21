@@ -33,12 +33,13 @@ mod tests {
         s
     }
 
-    /// The stock action bar with the touch controls over it.
+    /// The stock action bar with the touch controls and the controller's interface over it.
     fn controls() -> UiScript {
         let mut s = UiScript::new().unwrap();
         s.set_screen_size(1365.0, 768.0);
         super::super::action_bar_tests::load_action_bar(&s);
         super::super::test_ui::load_ui_strict(&s, "MobileControls.xml");
+        super::super::test_ui::load_ui_strict(&s, "MobilePad.xml");
         assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
         let _ = &mut s;
         s
@@ -56,6 +57,74 @@ mod tests {
             .eval("local x = BenillaMobileMenuButton:GetCenter(); return x / GetScreenWidth()")
             .unwrap();
         benilla_ui::assert_near!(share, 0.935, "the menu button's share of the width");
+    }
+
+    #[test]
+    fn the_pad_table_round_trips_and_the_screen_edits_it() {
+        benilla_formats::wow_data_or_skip!();
+        let s = controls();
+        let table = crate::mobile::gamepad::Bindings::default().serialize();
+        s.run(&format!("BENILLA_PAD_BINDINGS = \"{table}\""))
+            .unwrap();
+        assert_eq!(
+            s.eval::<String>(
+                "return BenillaMobilePad_Serialize(BenillaMobilePad_ParseBindings(BENILLA_PAD_BINDINGS))"
+            )
+            .unwrap(),
+            table
+        );
+        // Select LT + X, make it a command, step to the next, save: the host reads what it wrote.
+        s.run(
+            r#"BenillaMobilePad_ShowBindings()
+               BenillaMobilePadBindings.layer, BenillaMobilePadBindings.button = 1, "X"
+               BenillaMobilePadBindings_NextType()
+               BenillaMobilePadBindings_NextType()
+               BenillaMobilePadBindings_NextType()
+               BenillaMobilePadBindings_NextType()
+               BenillaMobilePadBindings_Step(1)
+               BenillaMobilePadBindings_Save()"#,
+        )
+        .unwrap();
+        let saved: String = s
+            .eval(r#"return GetCVar("mobileGamepadBindings")"#)
+            .unwrap();
+        let b = crate::mobile::gamepad::Bindings::parse(&saved);
+        assert_eq!(
+            b.0[1][2],
+            crate::mobile::gamepad::Command::Ui("chat".into())
+        );
+        assert_eq!(b.0[0][0], crate::mobile::gamepad::Command::Jump);
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    }
+
+    #[test]
+    fn the_cursor_is_wanted_while_a_window_is_up_and_touch_steps_aside_for_a_pad() {
+        benilla_formats::wow_data_or_skip!();
+        let s = controls();
+        assert!(!s
+            .eval::<bool>("return BenillaMobilePad_WantsCursor() ~= nil")
+            .unwrap());
+        s.run("BenillaMobileRadial:Show()").unwrap();
+        assert!(s
+            .eval::<bool>("return BenillaMobilePad_WantsCursor() ~= nil")
+            .unwrap());
+        s.run("BenillaMobileRadial:Hide(); BENILLA_PAD_CONNECTED = 1; BenillaMobile_Poll()")
+            .unwrap();
+        assert!(!s
+            .eval::<bool>("return BenillaMobileRing:IsShown() == 1")
+            .unwrap());
+        // A trigger held shows that layer.
+        let table = crate::mobile::gamepad::Bindings::default().serialize();
+        s.run(&format!(
+            "BENILLA_PAD_BINDINGS = \"{table}\"; BENILLA_PAD_LAYER = 2; BenillaMobilePadHud_Update()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.eval::<String>("return BenillaMobilePadHudTitle:GetText()")
+                .unwrap(),
+            "RT"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     }
 
     #[test]

@@ -27,7 +27,19 @@ impl bevy::app::Plugin for MobilePlugin {
             return;
         }
         app.init_resource::<gamepad::PadSettings>()
+            .init_resource::<gamepad::PadLua>()
+            .init_non_send_resource::<gamepad::PadRuntime>()
             .add_observer(gamepad::on_cvar)
+            .add_systems(Startup, gamepad::start_virtual_pad)
+            // With the touch layer, ahead of bevy_input, which turns these messages into state.
+            .add_systems(
+                PreUpdate,
+                gamepad::read_pad.before(bevy::input::InputSystems),
+            )
+            .add_systems(
+                Update,
+                gamepad::serve_pad_lua.in_set(crate::ui_script::UiDrain),
+            )
             .add_observer(launcher::on_cvar)
             .add_systems(
                 Update,

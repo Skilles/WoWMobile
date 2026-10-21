@@ -120,7 +120,8 @@
 
         -- Place, size, show and label every element for the layout and the view.
         function BenillaMobile_Apply()
-            local on = GetCVar("mobileTouchControls") ~= "0"
+            -- A controller plays instead: the touch controls step aside while one is connected.
+            local on = GetCVar("mobileTouchControls") ~= "0" and not BENILLA_PAD_CONNECTED
             local view = BENILLA_MOBILE_VIEWS[GetCVar("mobileView") or "combat"] or BENILLA_MOBILE_VIEWS.combat
             local alpha = BenillaMobile_Alpha()
             -- GetScreenWidth: the UIParent units its children are placed in, under any UI scale.
@@ -180,6 +181,10 @@
             local size = string.format("%.0fx%.0f", GetScreenWidth(), GetScreenHeight())
             if BenillaMobile.seen.size ~= size then
                 BenillaMobile.seen.size = size
+                changed = 1
+            end
+            if BenillaMobile.seen.pad ~= BENILLA_PAD_CONNECTED then
+                BenillaMobile.seen.pad = BENILLA_PAD_CONNECTED
                 changed = 1
             end
             for _, name in ipairs({ "mobileView", "mobileTouchControls", "mobileControlsAlpha", "mobileLayout", "mobileRingBar" }) do
