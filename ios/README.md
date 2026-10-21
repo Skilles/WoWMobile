@@ -77,7 +77,7 @@ ios/console.py --host <phone-ip> --token <token> 'state' 'lua =GetZoneText()' 's
 
 The remote console (Options > Touch & Controller > Remote Console, or `BENILLA_CONSOLE=1`)
 listens on port 7979: `lua`, `tap`, `hold`, `drag`, `pinch`, `key`, `type`, `shot`, `console`,
-`state`, `size`, `focus` (see `crates/benilla-app/src/mobile/console.rs`). Its token is
+`state`, `size`, `focus`, `log` (see `crates/benilla-app/src/mobile/console.rs`). Its token is
 `benilla-config/console-token`, or `BENILLA_CONSOLE_TOKEN`.
 
 In the Simulator: `WOW_TOUCH_ALWAYS=1` shows the stick outside the world, `BENILLA_VIRTUAL_PAD=1`

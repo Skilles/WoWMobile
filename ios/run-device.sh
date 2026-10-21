@@ -94,5 +94,11 @@ if [[ $copy_data == 1 ]]; then
 fi
 
 if [[ $launch == 1 ]]; then
-    xcrun devicectl device process launch --device "$DEVICE" --terminate-existing "$BUNDLE_ID"
+    # RUST_LOG, when set, reaches the app (and so the remote console's `log`).
+    env_json="{}"
+    if [[ -n "${RUST_LOG:-}" ]]; then
+        env_json="{\"RUST_LOG\":\"$RUST_LOG\"}"
+    fi
+    xcrun devicectl device process launch --device "$DEVICE" --terminate-existing \
+        --environment-variables "$env_json" "$BUNDLE_ID"
 fi

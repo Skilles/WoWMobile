@@ -13,7 +13,9 @@
 //!   `type <text>`: text, as the on-screen keyboard sends it.
 //! - `shot`: a screenshot to `benilla-config/Screenshots/console-<n>.png`; the reply names it.
 //! - `console <line>`: one `/console` line; `state`: where the client is; `size`: the window;
-//!   `focus`: the EditBox holding the keyboard.
+//!   `focus`: the EditBox holding the keyboard; `log [text]`: the recent log lines (the crash
+//!   report's ring, so `RUST_LOG` at launch decides what is in it), those holding `text` if given;
+//!   `target`: the selected unit's guid, NPC flags and quest-giver status.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -255,6 +257,8 @@ fn serve_world(world: &mut World) {
             "console" => reply(true, crate::console::execute(world, rest).join("\n")),
             "state" => state(world),
             "size" => size(world),
+            "log" => recent_log(rest),
+            "target" => target(world),
             _ => reply(false, format!("unknown command `{verb}`")),
         };
         let _ = req.reply.send(answer);
@@ -454,6 +458,31 @@ fn key_code(name: &str) -> Option<KeyCode> {
             }
         }
     })
+}
+
+fn target(world: &mut World) -> String {
+    let selection = world.resource::<crate::target::Selection>();
+    let (Some(entity), Some(guid)) = (selection.target, selection.guid) else {
+        return reply(true, "no target");
+    };
+    let flags = world
+        .get::<crate::net::ObjectStore>(entity)
+        .map(|s| s.0.unit_npc_flags());
+    let status = world
+        .get_resource::<crate::ui_quest::QuestGiver>()
+        .and_then(|q| q.status(guid));
+    reply(
+        true,
+        format!("guid={guid:#x} npc_flags={flags:?} quest_status={status:?}"),
+    )
+}
+
+fn recent_log(filter: &str) -> String {
+    let lines: Vec<String> = benilla_world::log_ring::recent()
+        .into_iter()
+        .filter(|l| filter.is_empty() || l.contains(filter))
+        .collect();
+    reply(true, lines.join("\n"))
 }
 
 fn shot(world: &mut World) -> String {
