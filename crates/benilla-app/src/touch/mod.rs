@@ -71,7 +71,7 @@ impl Default for TouchSettings {
             hold: 0.5,
             stick: 1.0,
             zone: 0.42,
-            alpha: 0.8,
+            alpha: 0.4,
         }
     }
 }

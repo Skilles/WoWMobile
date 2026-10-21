@@ -8,7 +8,7 @@
         BENILLA_MOBILE_TIP_VIEW = "Which touch controls show: Combat shows the jump ring and its "
             .. "action slots, Explore keeps the stick and the menu, Social puts the chat first, "
             .. "and Minimal shows only the stick."
-        BENILLA_MOBILE_TIP_ALPHA = "How solid the touch controls look while no finger is on them."
+        BENILLA_MOBILE_TIP_ALPHA = "How solid the touch controls look while no finger has touched the screen for a few seconds; a touch brings them back."
         BENILLA_MOBILE_TIP_LOOK = "How fast a drag over the world turns the camera."
         BENILLA_MOBILE_TIP_HOLD = "How long a finger has to rest before it counts as a right click."
         BENILLA_MOBILE_TIP_STICK = "The movement stick's size."

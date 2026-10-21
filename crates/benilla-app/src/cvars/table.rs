@@ -837,7 +837,7 @@ pub(crate) const REGISTERED: &[Registered] = &[
     ours("mobileHoldTime", "0.5", MOBILE),
     ours("mobileStickSize", "1", MOBILE),
     ours("mobileStickZone", "0.42", MOBILE),
-    ours("mobileControlsAlpha", "0.8", MOBILE),
+    ours("mobileControlsAlpha", "0.4", MOBILE),
     ours("mobileLayout", "", MOBILE),
     ours("mobileRingBar", "1", MOBILE),
     ours("mobileGamepad", "1", MOBILE),

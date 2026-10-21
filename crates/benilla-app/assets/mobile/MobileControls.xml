@@ -122,7 +122,7 @@
         function BenillaMobile_Apply()
             local on = GetCVar("mobileTouchControls") ~= "0"
             local view = BENILLA_MOBILE_VIEWS[GetCVar("mobileView") or "combat"] or BENILLA_MOBILE_VIEWS.combat
-            local alpha = tonumber(GetCVar("mobileControlsAlpha") or "") or 0.8
+            local alpha = BenillaMobile_Alpha()
             -- GetScreenWidth: the UIParent units its children are placed in, under any UI scale.
             local w, h = GetScreenWidth(), GetScreenHeight()
             for _, e in ipairs(BENILLA_MOBILE_ELEMENTS) do
@@ -147,6 +147,29 @@
             for k = 1, 8 do
                 local s = getglobal("BenillaMobileRingSlot" .. k)
                 if slots then s:Show() else s:Hide() end
+            end
+        end
+
+        -- Idle, the controls fade to mobileControlsAlpha; a finger on the screen (the touch layer
+        -- moves the cursor where it lands) brings them back for a few seconds.
+        BENILLA_MOBILE_AWAKE_SECS = 4
+        function BenillaMobile_Alpha()
+            local idle = tonumber(GetCVar("mobileControlsAlpha") or "") or 0.4
+            if BenillaMobile.awakeUntil and GetTime() < BenillaMobile.awakeUntil then return 1 end
+            return idle
+        end
+
+        function BenillaMobile_Wake()
+            local x, y = GetCursorPosition()
+            local moved = x ~= BenillaMobile.cursorX or y ~= BenillaMobile.cursorY
+            BenillaMobile.cursorX, BenillaMobile.cursorY = x, y
+            local was = BenillaMobile_Alpha()
+            if moved then BenillaMobile.awakeUntil = GetTime() + BENILLA_MOBILE_AWAKE_SECS end
+            local now = BenillaMobile_Alpha()
+            if now ~= was and not BenillaMobile.editing then
+                for _, e in ipairs(BENILLA_MOBILE_ELEMENTS) do
+                    getglobal(e.frame):SetAlpha(now)
+                end
             end
         end
 
@@ -463,6 +486,7 @@
             </OnEvent>
             <OnUpdate>
                 -- The screen every frame (a resize must not wait), the CVars twice a second.
+                BenillaMobile_Wake()
                 local w, h = GetScreenWidth(), GetScreenHeight()
                 this.elapsed = this.elapsed + arg1
                 if this.elapsed > 0.5 or w ~= this.w or h ~= this.h then
