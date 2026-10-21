@@ -71,6 +71,33 @@ pub fn sprite_key(path: &str) -> String {
     }
 }
 
+/// Interface textures made in code rather than read from a file, by [`sprite_key`]: a fork's own
+/// art, which no install holds (the mobile client's control rings). Registered at startup and
+/// answered before the loose files and the chain, by every sprite load and probe.
+static GENERATED_SPRITES: std::sync::RwLock<Option<HashMap<String, (u32, u32, Arc<Vec<u8>>)>>> =
+    std::sync::RwLock::new(None);
+
+/// Make `path` an interface texture of `width` by `height` RGBA texels.
+pub fn register_generated_sprite(path: &str, width: u32, height: u32, rgba: Vec<u8>) {
+    debug_assert_eq!(rgba.len(), (width * height * 4) as usize);
+    let mut map = GENERATED_SPRITES
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+    map.get_or_insert_with(HashMap::new)
+        .insert(sprite_key(path), (width, height, Arc::new(rgba)));
+}
+
+fn has_generated_sprite(path: &str) -> bool {
+    let map = GENERATED_SPRITES.read().unwrap_or_else(|e| e.into_inner());
+    map.as_ref().is_some_and(|m| m.contains_key(&sprite_key(path)))
+}
+
+fn generated_sprite(path: &str) -> Option<(u32, u32, Vec<u8>)> {
+    let map = GENERATED_SPRITES.read().unwrap_or_else(|e| e.into_inner());
+    let (w, h, rgba) = map.as_ref()?.get(&sprite_key(path))?;
+    Some((*w, *h, rgba.as_ref().clone()))
+}
+
 /// The two files a UI sprite reference may live in, in the order of `TextureCreate`'s two-candidate
 /// chain (`0x449d90`, extension table `0x835248 = {".tga", ".blp"}`): `.tga` first for a `.tga`
 /// reference, `.blp` first otherwise, and a miss on the first is silent. The sweeps that assert our
@@ -145,6 +172,9 @@ fn decode_sprite_as(
     open: LooseOpen,
     on_refusal: OnRefusal,
 ) -> Option<(u32, u32, Vec<u8>)> {
+    if let Some(generated) = generated_sprite(path) {
+        return Some(generated);
+    }
     let open = loose_open_for(path, open);
     let candidates = sprite_candidates(path);
     // Asked before the chain's lock, so an index build never stalls an archive reader.
@@ -228,6 +258,9 @@ pub struct SpriteProbe {
 impl SpriteProbe {
     /// See [`sprite_found`].
     pub fn found(&self, chain: &Mutex<Chain>, loose: &LooseFiles, path: &str) -> bool {
+        if has_generated_sprite(path) {
+            return true;
+        }
         let open = loose_open_for(path, LooseOpen::Index);
         let candidates = sprite_candidates(path);
         // The loose files first, outside the chain's lock.

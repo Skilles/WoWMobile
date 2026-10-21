@@ -2,6 +2,7 @@
 //! (loaded by `ui_script::mobile_ui` after benilla's layer), its settings are `mobile*` CVars on the
 //! options window's Mobile page, and its input is [`crate::touch`].
 
+pub(crate) mod art;
 pub(crate) mod console;
 pub(crate) mod gamepad;
 pub(crate) mod launcher;

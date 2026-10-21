@@ -9,6 +9,7 @@ pub(super) fn load(script: &UiScript, manifest: &str) -> Vec<String> {
     if !crate::mobile::enabled() {
         return Vec::new();
     }
+    crate::mobile::art::register();
     if let Err(e) = script.run("BENILLA_MOBILE = 1") {
         return vec![format!("benilla-mobile: {e}")];
     }

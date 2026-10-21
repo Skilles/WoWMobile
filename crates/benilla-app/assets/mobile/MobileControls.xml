@@ -260,11 +260,30 @@
             ActionButton_OnLoad()
         end
 
+        -- ── Round controls ──
+        -- The icon masked to its circle, as a portrait is: a square icon's corners would show past
+        -- the ring.
+        function BenillaMobileRound_SetIcon(button, path)
+            SetPortraitToTexture(button:GetName() .. "Icon", path)
+        end
+
+        -- The icon and the ring at the button's size, in the stock minimap button's proportions:
+        -- a 42 icon in a 58 button, the ring (`mobile/art.rs`, centred on its hole) 66 across.
+        function BenillaMobileRound_Fit(button)
+            local w = button:GetWidth()
+            local icon = getglobal(button:GetName() .. "Icon")
+            icon:SetWidth(w * 42 / 58)
+            icon:SetHeight(w * 42 / 58)
+            local border = getglobal(button:GetName() .. "Border")
+            border:SetWidth(w * 66 / 58)
+            border:SetHeight(w * 66 / 58)
+        end
+
         -- ── Buttons that hold a command ──
         function BenillaMobileButton_SetCommand(button, key)
             local c = BENILLA_MOBILE_COMMAND[key or ""] or BENILLA_MOBILE_COMMAND.target
             button.command = c.key
-            getglobal(button:GetName() .. "Icon"):SetTexture(c.icon)
+            BenillaMobileRound_SetIcon(button, c.icon)
             getglobal(button:GetName() .. "Label"):SetText(c.label)
         end
 
@@ -295,7 +314,7 @@
                 b:ClearAllPoints()
                 b:SetPoint("CENTER", this, "CENTER", math.cos(a) * 230, math.sin(a) * 200)
                 b.command = key
-                getglobal(b:GetName() .. "Icon"):SetTexture(c.icon)
+                BenillaMobileRound_SetIcon(b, c.icon)
                 getglobal(b:GetName() .. "Label"):SetText(c.label)
             end
         end
@@ -457,15 +476,15 @@
                 </Texture>
             </Layer>
             <Layer level="ARTWORK">
-                <Texture file="Interface\Minimap\MiniMap-TrackingBorder">
-                    <Size><AbsDimension x="96" y="96"/></Size>
-                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="-3" y="3"/></Offset></Anchor></Anchors>
+                <Texture name="$parentBorder" file="Interface\WoWMobile\Ring">
+                    <Size><AbsDimension x="66" y="66"/></Size>
+                    <Anchors><Anchor point="CENTER"/></Anchors>
                 </Texture>
             </Layer>
             <Layer level="OVERLAY">
                 <FontString name="$parentLabel" inherits="GameFontNormalSmall">
                     <Size><AbsDimension x="110" y="14"/></Size>
-                    <Anchors><Anchor point="TOP" relativePoint="BOTTOM"><Offset><AbsDimension x="0" y="2"/></Offset></Anchor></Anchors>
+                    <Anchors><Anchor point="TOP" relativePoint="BOTTOM"><Offset><AbsDimension x="0" y="-2"/></Offset></Anchor></Anchors>
                 </FontString>
             </Layer>
         </Layers>
@@ -512,9 +531,8 @@
                 <Anchors><Anchor point="CENTER"/></Anchors>
                 <Scripts>
                     <OnLoad>
-                        getglobal(this:GetName() .. "Icon"):SetTexture("Interface\\Icons\\Ability_Rogue_Sprint")
-                        getglobal(this:GetName() .. "Icon"):SetWidth(62)
-                        getglobal(this:GetName() .. "Icon"):SetHeight(62)
+                        BenillaMobileRound_SetIcon(this, "Interface\\Icons\\Ability_Rogue_Sprint")
+                        BenillaMobileRound_Fit(this)
                         getglobal(this:GetName() .. "Label"):SetText("Jump")
                         this:RegisterForClicks("LeftButtonDown")
                     </OnLoad>
@@ -573,7 +591,7 @@
         <Scripts>
             <OnLoad>
                 this.elementId = "menu"
-                getglobal(this:GetName() .. "Icon"):SetTexture("Interface\\Icons\\INV_Misc_Gear_01")
+                BenillaMobileRound_SetIcon(this, "Interface\\Icons\\INV_Misc_Gear_01")
                 getglobal(this:GetName() .. "Label"):SetText("Menu")
             </OnLoad>
             <OnClick>
