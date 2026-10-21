@@ -20,6 +20,8 @@
 # same name. Machine-local by definition — `crate::local_state`
 # is the only thing in the tree that may write it.
 /benilla-config
+# The iOS Simulator run's own state folder (ios/run-sim.sh sets BENILLA_HOME to it).
+/benilla-config-ios
 
 # The account a scripted run from this checkout logs in as (scripts/probe-identity.sh and the
 # client's account guard read it): WOW_USER=, WOW_PASS=, WOW_CHAR=, one per line. A credential.
@@ -42,3 +44,8 @@ __pycache__/
 # The vanilla addon corpus the UI engine's real-addon tests read (third-party content): a symlink
 # beside `WoW`, or `BENILLA_ADDON_CORPUS`.
 /wow-addons-vanilla
+
+# iOS: the generated Xcode project (ios/project.yml is the source) and your signing team.
+/ios/benilla.xcodeproj
+/ios/.team
+/ios/Assets.xcassets
