@@ -1,0 +1,5 @@
+# The mobile fork's glue interface: the launcher over the stock login screen.
+
+## Interface: 11200
+
+MobileLauncher.xml

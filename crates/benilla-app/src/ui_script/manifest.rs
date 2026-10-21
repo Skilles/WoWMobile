@@ -263,7 +263,12 @@ pub(crate) fn load_stock_bindings(script: &mut UiScript) {
 /// stock load, with no `ADDON_LOADED` and no registry row, as FrameXML does (`0x48ffed`).
 fn load_layer(script: &UiScript) -> Vec<String> {
     let layer = Addon::layer();
-    layer.load_files(script, &layer.toc.files)
+    let mut failures = layer.load_files(script, &layer.toc.files);
+    failures.extend(super::mobile_ui::load(
+        script,
+        crate::mobile::WORLD_MANIFEST,
+    ));
+    failures
 }
 
 /// The in-game UI, the core, then the layer unless [`layer_enabled`] says no, then every

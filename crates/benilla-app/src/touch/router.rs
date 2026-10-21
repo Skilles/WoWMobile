@@ -8,7 +8,8 @@
 //! - Any other finger is the mouse. A tap clicks left where it lifted; holding still is a right
 //!   click; a drag over UI is a left drag, and over the world a right-button mouse-look, which
 //!   steers the character as a right-drag does.
-//! - A second mouse finger turns both into a pinch, which zooms like the wheel.
+//! - A second mouse finger turns both into a pinch: spreading them zooms and moving them together
+//!   scrolls, both as the wheel.
 
 use bevy::math::{Rect, Vec2};
 use bevy::platform::collections::HashMap;
@@ -396,9 +397,14 @@ impl Router {
                     Role::Pinch { last } if *id != t.id => Some(last),
                     _ => None,
                 }) {
-                    let before = last.distance(other);
-                    let after = t.pos.distance(other);
-                    out.push(Output::Wheel((after - before) / cfg.pinch_per_notch));
+                    // Spreading zooms in; both fingers moving up scroll up (half the move per
+                    // finger, as each finger's move arrives on its own). Both are the wheel.
+                    let spread = t.pos.distance(other) - last.distance(other);
+                    let rise = (last.y - t.pos.y) * 0.5;
+                    let notches = (spread + rise) / cfg.pinch_per_notch;
+                    if notches != 0.0 {
+                        out.push(Output::Wheel(notches));
+                    }
                 }
                 self.roles.insert(t.id, Role::Pinch { last: t.pos });
             }
@@ -629,6 +635,30 @@ mod tests {
         assert!(r
             .update(&[t(2, Phase::End, 760.0, 200.0)], 0.1, &c)
             .is_empty());
+    }
+
+    #[test]
+    fn two_fingers_moving_up_together_scroll_up() {
+        let mut r = Router::default();
+        let c = ctx(false);
+        r.update(&[t(1, Phase::Start, 600.0, 300.0)], 0.0, &c);
+        r.update(&[t(2, Phase::Start, 700.0, 300.0)], 0.02, &c);
+        let out = r.update(
+            &[
+                t(1, Phase::Move, 600.0, 264.0),
+                t(2, Phase::Move, 700.0, 264.0),
+            ],
+            0.04,
+            &c,
+        );
+        let total: f32 = out
+            .iter()
+            .map(|o| match o {
+                Output::Wheel(n) => *n,
+                _ => 0.0,
+            })
+            .sum();
+        benilla_ui::assert_near!(total, 1.0, "36 points up together is one notch up");
     }
 
     #[test]

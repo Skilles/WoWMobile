@@ -182,7 +182,9 @@ fn load_glue_layer(script: &UiScript) -> Vec<String> {
         },
         super::addons::Source::Builtin,
     );
-    layer.load_files(script, &files)
+    let mut failures = layer.load_files(script, &files);
+    failures.extend(super::mobile_ui::load(script, crate::mobile::GLUE_MANIFEST));
+    failures
 }
 
 /// Drain the glue load's record into `Logs\GlueXML.log`, as the builder does after

@@ -484,8 +484,10 @@ pub(super) fn read(req: &str) -> Option<Vec<u8>> {
     if super::reference_ui::is_chain_entry(req) {
         return super::reference_ui::read(req);
     }
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/ui");
-    std::fs::read(dir.join(req)).ok()
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    std::fs::read(root.join("assets/ui").join(req))
+        .or_else(|_| std::fs::read(root.join("assets/mobile").join(req)))
+        .ok()
 }
 
 /// What stock `MerchantFrame.xml` needs to load and behave, including `BasicControls.xml` for the

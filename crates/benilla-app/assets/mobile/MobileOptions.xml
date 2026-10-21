@@ -1,0 +1,273 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+    <!-- The options window's Mobile page (the mobile fork's `mobile*` CVars), the larger UI scale
+         range a phone wants, and the desktop rows a phone has no use for, greyed out. Loaded after
+         benilla's OptionsFrame.xml, whose rows and templates it uses. -->
+    <Script><![CDATA[
+        BENILLA_MOBILE_TIP_TOUCH = "Show the floating movement stick, the jump ring and the menu "
+            .. "button, and read taps, long presses and drags as clicks."
+        BENILLA_MOBILE_TIP_VIEW = "Which touch controls show: Combat shows the jump ring and its "
+            .. "action slots, Explore keeps the stick and the menu, Social puts the chat first, "
+            .. "and Minimal shows only the stick."
+        BENILLA_MOBILE_TIP_ALPHA = "How solid the touch controls look while no finger is on them."
+        BENILLA_MOBILE_TIP_LOOK = "How fast a drag over the world turns the camera."
+        BENILLA_MOBILE_TIP_HOLD = "How long a finger has to rest before it counts as a right click."
+        BENILLA_MOBILE_TIP_STICK = "The movement stick's size."
+        BENILLA_MOBILE_TIP_ZONE = "How much of the left of the screen a thumb can land on to "
+            .. "grab the movement stick."
+        BENILLA_MOBILE_TIP_RING = "Which action bar the jump ring's slots show. Drag a spell onto "
+            .. "a slot to change it, as on any action bar."
+        BENILLA_MOBILE_TIP_PAD = "Play with a game controller (Backbone One, Xbox, DualSense or "
+            .. "any MFi pad)."
+        BENILLA_MOBILE_TIP_PAD_LOOK = "How fast the right stick turns the camera."
+        BENILLA_MOBILE_TIP_PAD_INVERT = "Push the right stick up to look down."
+        BENILLA_MOBILE_TIP_AUTOLOGIN = "Sign in to the last account you used when the game starts."
+        BENILLA_MOBILE_TIP_CONSOLE = "Let a computer on your network drive the game through "
+            .. "benilla's remote console, for debugging. Leave it off otherwise."
+        BENILLA_MOBILE_TIP_DESKTOP = "Not used on this device."
+
+        table.insert(BENILLA_OPTIONS_CATEGORY_KEYS, "Mobile")
+        BENILLA_OPTIONS_PAGE_ROWS.Mobile = {
+            "RowTouch", "RowView", "RowAlpha", "RowLook", "RowHold", "RowStick", "RowZone",
+            "RowRing",
+            "RowPad", "RowPadLook", "RowPadInvert",
+            "RowAutoLogin", "RowConsole",
+        }
+
+        -- Rows that mean nothing on a phone, greyed out after every page's own dependency rules.
+        BENILLA_MOBILE_DESKTOP_ONLY = {
+            Graphics = { "RowDisplayMode", "RowVerticalSync" },
+            Audio = { "RowBackgroundSound" },
+        }
+        local BenillaMobile_UpdateDependencies = BenillaOptionsPage_UpdateDependencies
+        function BenillaOptionsPage_UpdateDependencies(key)
+            BenillaMobile_UpdateDependencies(key)
+            local off = BENILLA_MOBILE_DESKTOP_ONLY[key]
+            if not off then return end
+            for _, rkey in ipairs(off) do
+                local row = getglobal("BenillaOptionsFrameContainerBody" .. key .. rkey)
+                if row then
+                    BenillaOptionsRow_SetEnabled(row, nil)
+                    row.tip = "BENILLA_MOBILE_TIP_DESKTOP"
+                end
+            end
+        end
+
+        -- Seconds, for the long-press row.
+        local BenillaMobile_FormatValue = BenillaOptionsRow_FormatValue
+        function BenillaOptionsRow_FormatValue(row, value)
+            if row.fmt == "seconds" then
+                return string.format("%.2f s", value)
+            end
+            return BenillaMobile_FormatValue(row, value)
+        end
+
+        -- A UI scale up to 160%: fingers are wider than a pointer.
+        BENILLA_MOBILE_UI_SCALE_MAX = 1.6
+        BenillaOptionsSliderRow_Setup(BenillaOptionsFrameContainerBodyGraphicsRowUiScale,
+            OptionsFrameSliders[1].minValue, BENILLA_MOBILE_UI_SCALE_MAX,
+            OptionsFrameSliders[1].valueStep)
+    ]]></Script>
+
+    <!-- The Mobile group in the category list, under System's last row. -->
+    <Frame name="BenillaOptionsFrameCategoryListHeaderMobile" inherits="BenillaOptionsCategoryHeaderTemplate"
+        parent="BenillaOptionsFrameCategoryList">
+        <Anchors>
+            <Anchor point="TOPLEFT" relativeTo="BenillaOptionsFrameCategoryListRowAudio" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-22"/></Offset></Anchor>
+        </Anchors>
+        <Scripts>
+            <OnLoad>getglobal(this:GetName() .. "Label"):SetText("Mobile")</OnLoad>
+        </Scripts>
+    </Frame>
+    <Button name="BenillaOptionsFrameCategoryListRowMobile" inherits="BenillaOptionsCategoryRowTemplate"
+        parent="BenillaOptionsFrameCategoryList">
+        <Anchors><Anchor point="TOPLEFT" relativeTo="BenillaOptionsFrameCategoryListHeaderMobile" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-2"/></Offset></Anchor></Anchors>
+        <Scripts><OnLoad>BenillaOptionsCategoryRow_OnLoad(this, "Mobile", "Touch &amp; Controller")</OnLoad></Scripts>
+    </Button>
+
+    <Button name="BenillaOptionsFrameContainerBodySearchHeadMobile" inherits="BenillaOptionsSearchHeadTemplate"
+        parent="BenillaOptionsFrameContainerBody">
+        <Scripts><OnLoad>
+            this.categoryKey = "Mobile"
+            getglobal(this:GetName() .. "Label"):SetText("Touch &amp; Controller")
+        </OnLoad></Scripts>
+    </Button>
+
+    <Frame name="BenillaOptionsFrameContainerBodyMobile" parent="BenillaOptionsFrameContainerBody" hidden="true">
+        <Anchors>
+            <Anchor point="TOPLEFT"/>
+            <Anchor point="BOTTOMRIGHT"/>
+        </Anchors>
+        <Frames>
+            <Button name="$parentEditLayout" inherits="UIPanelButtonTemplate" text="Edit Touch Layout">
+                <Size><AbsDimension x="170" y="24"/></Size>
+                <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="10" y="-10"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>
+                    HideUIPanel(BenillaOptionsFrame)
+                    if BenillaMobileLayout_Toggle then BenillaMobileLayout_Toggle() end
+                </OnClick></Scripts>
+            </Button>
+            <Button name="$parentPadBindings" inherits="UIPanelButtonTemplate" text="Controller Buttons">
+                <Size><AbsDimension x="170" y="24"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="$parentEditLayout" relativePoint="RIGHT"><Offset><AbsDimension x="10" y="0"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>
+                    HideUIPanel(BenillaOptionsFrame)
+                    if BenillaMobilePad_ShowBindings then BenillaMobilePad_ShowBindings() end
+                </OnClick></Scripts>
+            </Button>
+            <Button name="$parentAccounts" inherits="UIPanelButtonTemplate" text="Servers &amp; Accounts">
+                <Size><AbsDimension x="170" y="24"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="$parentPadBindings" relativePoint="RIGHT"><Offset><AbsDimension x="10" y="0"/></Offset></Anchor></Anchors>
+                <Scripts>
+                    <OnLoad>this.tooltipText = "Logs out to the launcher, where servers and accounts are kept."</OnLoad>
+                    <OnClick>
+                        HideUIPanel(BenillaOptionsFrame)
+                        Logout()
+                    </OnClick>
+                </Scripts>
+            </Button>
+
+            <!-- Touch -->
+            <Frame name="$parentRowTouch" inherits="BenillaOptionsCheckboxRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT"><Offset><AbsDimension x="10" y="-46"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT"><Offset><AbsDimension x="-20" y="-46"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileTouchControls", "Touch Controls", "BENILLA_MOBILE_TIP_TOUCH")
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowView" inherits="BenillaOptionsDropdownRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowTouch" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowTouch" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileView", "View", "BENILLA_MOBILE_TIP_VIEW")
+                    BenillaOptionsDropdownRow_Setup(this, {
+                        { text = "Combat", value = "combat" },
+                        { text = "Explore", value = "explore" },
+                        { text = "Social", value = "social" },
+                        { text = "Minimal", value = "minimal" },
+                    })
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowAlpha" inherits="BenillaOptionsSliderRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowView" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowView" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileControlsAlpha", "Controls Opacity", "BENILLA_MOBILE_TIP_ALPHA")
+                    BenillaOptionsSliderRow_Setup(this, 0.2, 1, 0.05)
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowLook" inherits="BenillaOptionsSliderRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowAlpha" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowAlpha" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileLookSpeed", "Touch Look Speed", "BENILLA_MOBILE_TIP_LOOK")
+                    BenillaOptionsSliderRow_Setup(this, 0.25, 3, 0.05)
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowHold" inherits="BenillaOptionsSliderRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowLook" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowLook" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileHoldTime", "Long Press Time", "BENILLA_MOBILE_TIP_HOLD")
+                    BenillaOptionsSliderRow_Setup(this, 0.25, 1, 0.05, "seconds")
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowStick" inherits="BenillaOptionsSliderRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowHold" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowHold" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileStickSize", "Movement Stick Size", "BENILLA_MOBILE_TIP_STICK")
+                    BenillaOptionsSliderRow_Setup(this, 0.6, 1.6, 0.05)
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowZone" inherits="BenillaOptionsSliderRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowStick" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowStick" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileStickZone", "Movement Stick Area", "BENILLA_MOBILE_TIP_ZONE")
+                    BenillaOptionsSliderRow_Setup(this, 0.25, 0.6, 0.01)
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowRing" inherits="BenillaOptionsDropdownRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowZone" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowZone" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileRingBar", "Jump Ring Bar", "BENILLA_MOBILE_TIP_RING")
+                    BenillaOptionsDropdownRow_Setup(this, {
+                        { text = "Main Bar", value = "1" },
+                        { text = "Main Bar, Page 2", value = "2" },
+                        { text = "Right Bar", value = "3" },
+                        { text = "Right Bar 2", value = "4" },
+                        { text = "Bottom Right Bar", value = "5" },
+                        { text = "Bottom Left Bar", value = "6" },
+                    })
+                </OnLoad></Scripts>
+            </Frame>
+
+            <!-- Controller -->
+            <Frame name="$parentRowPad" inherits="BenillaOptionsCheckboxRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowRing" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-21"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowRing" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-21"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileGamepad", "Controller Support", "BENILLA_MOBILE_TIP_PAD")
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowPadLook" inherits="BenillaOptionsSliderRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowPad" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowPad" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileGamepadLook", "Controller Look Speed", "BENILLA_MOBILE_TIP_PAD_LOOK")
+                    BenillaOptionsSliderRow_Setup(this, 0.25, 3, 0.05)
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowPadInvert" inherits="BenillaOptionsCheckboxRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowPadLook" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowPadLook" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileGamepadInvert", "Invert Controller Look", "BENILLA_MOBILE_TIP_PAD_INVERT")
+                </OnLoad></Scripts>
+            </Frame>
+
+            <!-- Login and debugging -->
+            <Frame name="$parentRowAutoLogin" inherits="BenillaOptionsCheckboxRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowPadInvert" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-21"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowPadInvert" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-21"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileAutoLogin", "Sign In Automatically", "BENILLA_MOBILE_TIP_AUTOLOGIN")
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowConsole" inherits="BenillaOptionsCheckboxRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowAutoLogin" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowAutoLogin" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileRemoteConsole", "Remote Console", "BENILLA_MOBILE_TIP_CONSOLE")
+                </OnLoad></Scripts>
+            </Frame>
+        </Frames>
+    </Frame>
+</Ui>

@@ -1,12 +1,12 @@
-//! Touch controls (iOS): the screen's fingers become the mouse, the movement keys and a few
-//! on-screen buttons, which the rest of benilla reads as it reads a keyboard and mouse. The
-//! decisions are [`router`]'s; this module feeds it `TouchInput` and writes what it answers as
-//! input messages ahead of `bevy_input`, and draws the joystick and the buttons.
+//! Touch input (the mobile client): the screen's fingers become the mouse, the movement keys and the
+//! wheel, which the rest of benilla reads as it reads a keyboard and mouse. The decisions are
+//! [`router`]'s; this module feeds it `TouchInput` (and [`InjectedTouches`], the remote console's)
+//! and writes what it answers as input messages ahead of `bevy_input`, and draws the movement stick
+//! while a thumb holds it. The jump ring, the radial menu and the views are the mobile interface's
+//! (`assets/mobile`), driven by the mouse this module makes.
 //!
-//! The buttons, down the right edge in the world: Jump (Space), Chat (Enter), Target (Tab), Menu
-//! (Escape), the 1.12 default keys for `JUMP`, `OPENCHAT`, `TARGETNEARESTENEMY` and
-//! `TOGGLEGAMEMENU`. The joystick holds W/S and Q/E, `MOVEFORWARD`/`MOVEBACKWARD` and the strafes,
-//! so a look drag turns and the stick moves relative to the view.
+//! The stick holds W/S and Q/E, `MOVEFORWARD`/`MOVEBACKWARD` and the strafes, so a look drag turns
+//! and the stick moves relative to the view. The `mobile*` CVars tune it (`MobileOptions.xml`).
 
 pub(crate) mod router;
 
@@ -21,38 +21,69 @@ use bevy::window::{CursorMoved, PrimaryWindow, ScreenEdge};
 use crate::client_state::ClientState;
 use router::{Button, Context, MoveKeys, Output, Phase, Router};
 
-/// A look drag's points to mouse motion: a finger covers far fewer points than a mouse does
-/// pixels for the same turn.
+/// A look drag's points to mouse motion at `mobileLookSpeed` 1: a finger covers far fewer points
+/// than a mouse does pixels for the same turn.
 const LOOK_SCALE: f32 = 2.5;
-
-/// The on-screen buttons, top to bottom: the key each holds and its icon.
-const BUTTONS: [(KeyCode, &str); 4] = [
-    (KeyCode::Escape, "Interface\\Icons\\INV_Misc_Gear_01.blp"),
-    (
-        KeyCode::Tab,
-        "Interface\\Icons\\Ability_Hunter_SniperShot.blp",
-    ),
-    (KeyCode::Enter, "Interface\\Icons\\INV_Letter_01.blp"),
-    (KeyCode::Space, "Interface\\Icons\\Ability_Rogue_Sprint.blp"),
-];
-/// Button size, gap, and distance from the right edge (clear of the sensor housing in either
-/// landscape), in points.
-const BUTTON_SIZE: f32 = 52.0;
-const BUTTON_GAP: f32 = 12.0;
-const BUTTON_MARGIN: f32 = 64.0;
+/// The stick's travel at `mobileStickSize` 1, in points.
+const STICK_RADIUS: f32 = 56.0;
+/// The knob's diameter, in points.
+const KNOB: f32 = 48.0;
 
 pub(crate) struct TouchPlugin;
 
 impl Plugin for TouchPlugin {
     fn build(&self, app: &mut App) {
-        // A touch screen is iOS; elsewhere the mouse and keyboard are real.
-        if !cfg!(target_os = "ios") {
+        app.init_resource::<InjectedTouches>();
+        if !crate::mobile::enabled() {
             return;
         }
         app.init_non_send_resource::<TouchState>()
+            .init_resource::<TouchSettings>()
+            .add_observer(on_cvar)
             .add_systems(Startup, (spawn_overlay, defer_edge_gestures))
             .add_systems(PreUpdate, route_touches.before(InputSystems))
             .add_systems(Update, draw_overlay);
+    }
+}
+
+/// Touches from somewhere other than the screen (the remote console), routed with the screen's at
+/// the next frame, in logical points.
+#[derive(Resource, Default)]
+pub(crate) struct InjectedTouches(pub(crate) Vec<router::Touch>);
+
+/// The `mobile*` CVars this module reads.
+#[derive(Resource, Clone, Copy, Debug)]
+struct TouchSettings {
+    controls: bool,
+    look: f32,
+    hold: f32,
+    stick: f32,
+    zone: f32,
+    alpha: f32,
+}
+
+impl Default for TouchSettings {
+    fn default() -> Self {
+        Self {
+            controls: true,
+            look: 1.0,
+            hold: 0.5,
+            stick: 1.0,
+            zone: 0.42,
+            alpha: 0.8,
+        }
+    }
+}
+
+fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut settings: ResMut<TouchSettings>) {
+    match ev.key().as_str() {
+        "mobiletouchcontrols" => settings.controls = ev.flag(),
+        "mobilelookspeed" => settings.look = ev.num().clamp(0.1, 5.0),
+        "mobileholdtime" => settings.hold = ev.num().clamp(0.15, 2.0),
+        "mobilesticksize" => settings.stick = ev.num().clamp(0.3, 3.0),
+        "mobilestickzone" => settings.zone = ev.num().clamp(0.1, 0.9),
+        "mobilecontrolsalpha" => settings.alpha = ev.num().clamp(0.05, 1.0),
+        _ => {}
     }
 }
 
@@ -63,28 +94,16 @@ struct TouchState {
     keys: MoveKeys,
 }
 
-/// Whether the joystick and buttons are live: in the world, or anywhere under `WOW_TOUCH_ALWAYS`
-/// (a check of the controls without a login).
-fn controls_live(client: Option<&State<ClientState>>) -> bool {
+/// Whether the stick is live: in the world with touch controls on, or anywhere under
+/// `WOW_TOUCH_ALWAYS` (a check of the controls without a login).
+fn controls_live(client: Option<&State<ClientState>>, settings: &TouchSettings) -> bool {
     static ALWAYS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ALWAYS.get_or_init(|| std::env::var_os("WOW_TOUCH_ALWAYS").is_some())
-        || client.is_some_and(|s| *s.get() == ClientState::InWorld)
+        || (settings.controls && client.is_some_and(|s| *s.get() == ClientState::InWorld))
 }
 
-/// The buttons' rects in logical points for a window of `size`.
-fn button_rects(size: Vec2) -> Vec<Rect> {
-    let total = BUTTONS.len() as f32 * BUTTON_SIZE + (BUTTONS.len() - 1) as f32 * BUTTON_GAP;
-    let top = (size.y - total) * 0.5;
-    let left = size.x - BUTTON_MARGIN - BUTTON_SIZE;
-    (0..BUTTONS.len())
-        .map(|i| {
-            let y = top + i as f32 * (BUTTON_SIZE + BUTTON_GAP);
-            Rect::new(left, y, left + BUTTON_SIZE, y + BUTTON_SIZE)
-        })
-        .collect()
-}
-
-fn key_message(key: KeyCode, pressed: bool, window: Entity) -> KeyboardInput {
+/// A key's press or release as a keyboard would send it.
+pub(crate) fn key_message(key: KeyCode, pressed: bool, window: Entity) -> KeyboardInput {
     let logical_key = match key {
         KeyCode::Escape => Key::Escape,
         KeyCode::Tab => Key::Tab,
@@ -94,6 +113,8 @@ fn key_message(key: KeyCode, pressed: bool, window: Entity) -> KeyboardInput {
         KeyCode::KeyS => Key::Character("s".into()),
         KeyCode::KeyQ => Key::Character("q".into()),
         KeyCode::KeyE => Key::Character("e".into()),
+        KeyCode::KeyA => Key::Character("a".into()),
+        KeyCode::KeyD => Key::Character("d".into()),
         _ => Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
     };
     KeyboardInput {
@@ -128,9 +149,12 @@ type InputWriters<'w> = (
     MessageWriter<'w, KeyboardInput>,
 );
 
+#[allow(clippy::too_many_arguments)]
 fn route_touches(
     mut state: NonSendMut<TouchState>,
     mut touches: MessageReader<TouchInput>,
+    mut injected: ResMut<InjectedTouches>,
+    settings: Res<TouchSettings>,
     mut windows: Query<(Entity, &mut Window), With<PrimaryWindow>>,
     time: Res<Time>,
     over_ui: Option<Res<crate::ui_script::PointerOverUi>>,
@@ -142,7 +166,7 @@ fn route_touches(
         return;
     };
     let (cursor_moved, mouse_buttons, motion, wheel, keyboard) = &mut writers;
-    let batch: Vec<router::Touch> = touches
+    let mut batch: Vec<router::Touch> = touches
         .read()
         .map(|t| router::Touch {
             id: t.id,
@@ -155,13 +179,17 @@ fn route_touches(
             pos: t.position,
         })
         .collect();
+    batch.append(&mut injected.0);
     let size = Vec2::new(window.width(), window.height());
+    state.router.config.hold_secs = settings.hold;
+    state.router.config.joystick_radius = STICK_RADIUS * settings.stick;
+    state.router.config.joystick_zone = settings.zone;
     let ctx = Context {
         over_ui: over_ui.is_some_and(|o| o.0),
-        in_world: controls_live(client.as_deref()),
+        in_world: controls_live(client.as_deref(), &settings),
         typing: script.is_some_and(|s| s.has_keyboard_focus()),
         window: size,
-        buttons: button_rects(size),
+        buttons: Vec::new(),
     };
     let now = time.elapsed_secs();
     for output in state.router.update(&batch, now, &ctx) {
@@ -193,7 +221,7 @@ fn route_touches(
             }
             Output::Look(d) => {
                 motion.write(MouseMotion {
-                    delta: d * LOOK_SCALE,
+                    delta: d * LOOK_SCALE * settings.look,
                 });
             }
             Output::Wheel(y) => {
@@ -204,9 +232,8 @@ fn route_touches(
                     window: window_entity,
                 });
             }
-            Output::ButtonKey(i, pressed) => {
-                keyboard.write(key_message(BUTTONS[i].0, pressed, window_entity));
-            }
+            // No on-screen buttons of the router's own: the mobile interface draws them.
+            Output::ButtonKey(..) => {}
         }
     }
     let keys = state.router.keys();
@@ -229,11 +256,9 @@ fn route_touches(
 #[derive(Component)]
 struct OverlayRoot;
 #[derive(Component)]
-struct OverlayButton(usize);
+struct StickBase;
 #[derive(Component)]
-struct JoystickBase;
-#[derive(Component)]
-struct JoystickKnob;
+struct StickKnob;
 
 fn circle(size: f32, color: Color) -> (Node, BackgroundColor, BorderColor) {
     (
@@ -250,7 +275,7 @@ fn circle(size: f32, color: Color) -> (Node, BackgroundColor, BorderColor) {
     )
 }
 
-fn spawn_overlay(mut commands: Commands, assets: Res<AssetServer>) {
+fn spawn_overlay(mut commands: Commands) {
     commands
         .spawn((
             OverlayRoot,
@@ -263,128 +288,74 @@ fn spawn_overlay(mut commands: Commands, assets: Res<AssetServer>) {
             // Over the game's UI, under the loading screen (1000) and the fade (1050).
             GlobalZIndex(900),
             Pickable::IGNORE,
-            Visibility::Hidden,
         ))
         .with_children(|root| {
-            for (i, (_, icon)) in BUTTONS.iter().enumerate() {
-                let url = benilla_assets::texture_url(icon, (false, false));
-                root.spawn((
-                    OverlayButton(i),
-                    circle(BUTTON_SIZE, Color::srgba(0.0, 0.0, 0.0, 0.35)),
-                    Pickable::IGNORE,
-                ))
-                .with_children(|b| {
-                    b.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
-                            border_radius: BorderRadius::MAX,
-                            ..default()
-                        },
-                        ImageNode {
-                            image: assets.load(url),
-                            color: Color::srgba(1.0, 1.0, 1.0, 0.85),
-                            ..default()
-                        },
-                        Pickable::IGNORE,
-                    ));
-                });
-            }
             root.spawn((
-                JoystickBase,
-                circle(112.0, Color::srgba(0.0, 0.0, 0.0, 0.25)),
+                StickBase,
+                circle(STICK_RADIUS * 2.0, Color::srgba(0.0, 0.0, 0.0, 0.25)),
                 Visibility::Hidden,
                 Pickable::IGNORE,
             ));
             root.spawn((
-                JoystickKnob,
-                circle(48.0, Color::srgba(0.85, 0.75, 0.45, 0.45)),
+                StickKnob,
+                circle(KNOB, Color::srgba(0.85, 0.75, 0.45, 0.45)),
                 Visibility::Hidden,
                 Pickable::IGNORE,
             ));
         });
 }
 
-type OverlayParts<'w, 's> = (
-    Query<'w, 's, (&'static mut Node, &'static mut Visibility), With<OverlayRoot>>,
+type StickParts<'w, 's> = (
     Query<
         'w,
         's,
-        (&'static OverlayButton, &'static mut Node),
         (
-            Without<OverlayRoot>,
-            Without<JoystickBase>,
-            Without<JoystickKnob>,
+            &'static mut Node,
+            &'static mut Visibility,
+            &'static mut BackgroundColor,
         ),
+        (With<StickBase>, Without<StickKnob>),
     >,
     Query<
         'w,
         's,
-        (&'static mut Node, &'static mut Visibility),
         (
-            With<JoystickBase>,
-            Without<OverlayRoot>,
-            Without<JoystickKnob>,
+            &'static mut Node,
+            &'static mut Visibility,
+            &'static mut BackgroundColor,
         ),
-    >,
-    Query<
-        'w,
-        's,
-        (&'static mut Node, &'static mut Visibility),
-        (
-            With<JoystickKnob>,
-            Without<OverlayRoot>,
-            Without<JoystickBase>,
-        ),
+        (With<StickKnob>, Without<StickBase>),
     >,
 );
 
-/// Show the overlay in the world, place the buttons for the window, and draw the joystick under
-/// the finger that holds it.
+/// Draw the stick under the thumb that holds it; nothing while no thumb does.
 fn draw_overlay(
     state: NonSend<TouchState>,
-    windows: Query<&Window, With<PrimaryWindow>>,
+    settings: Res<TouchSettings>,
     client: Option<Res<State<ClientState>>>,
-    mut parts: ParamSet<OverlayParts>,
+    mut parts: ParamSet<StickParts>,
 ) {
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let size = Vec2::new(window.width(), window.height());
-    let in_world = controls_live(client.as_deref());
-    for (_, mut vis) in parts.p0().iter_mut() {
-        vis.set_if_neq(if in_world {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        });
-    }
-    let rects = button_rects(size);
-    for (button, mut node) in parts.p1().iter_mut() {
-        let r = rects[button.0];
-        node.left = Val::Px(r.min.x);
-        node.top = Val::Px(r.min.y);
-    }
-    let stick = state.router.joystick().filter(|_| in_world);
+    let live = controls_live(client.as_deref(), &settings);
+    let stick = state.router.joystick().filter(|_| live);
     let radius = state.router.config.joystick_radius;
-    for (mut node, mut vis) in parts.p2().iter_mut() {
+    for (mut node, mut vis, mut color) in parts.p0().iter_mut() {
         if let Some((center, _)) = stick {
             node.left = Val::Px(center.x - radius);
             node.top = Val::Px(center.y - radius);
             node.width = Val::Px(radius * 2.0);
             node.height = Val::Px(radius * 2.0);
+            color.0 = Color::srgba(0.0, 0.0, 0.0, 0.3 * settings.alpha);
             vis.set_if_neq(Visibility::Inherited);
         } else {
             vis.set_if_neq(Visibility::Hidden);
         }
     }
-    for (mut node, mut vis) in parts.p3().iter_mut() {
+    for (mut node, mut vis, mut color) in parts.p1().iter_mut() {
         if let Some((center, at)) = stick {
-            let off = at - center;
-            let off = off.clamp_length_max(radius);
-            let knob = center + off;
-            node.left = Val::Px(knob.x - 24.0);
-            node.top = Val::Px(knob.y - 24.0);
+            let knob = center + (at - center).clamp_length_max(radius);
+            node.left = Val::Px(knob.x - KNOB * 0.5);
+            node.top = Val::Px(knob.y - KNOB * 0.5);
+            color.0 = Color::srgba(0.85, 0.75, 0.45, 0.55 * settings.alpha);
             vis.set_if_neq(Visibility::Inherited);
         } else {
             vis.set_if_neq(Visibility::Hidden);

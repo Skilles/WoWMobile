@@ -24,6 +24,7 @@ pub(crate) mod glue_create;
 pub(crate) mod glue_mgr;
 pub(crate) mod glue_scene;
 mod input;
+mod mobile_ui;
 /// The server alert's fetch and `LaunchURL`'s browser, for the stock glue screens.
 pub(crate) mod server_alert;
 #[cfg(test)]
@@ -289,7 +290,9 @@ pub(crate) struct UiScriptPlugin;
 /// `uiScale`'s change callback: the dial's own `[0.5, 1.5]` clamp.
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut scale: ResMut<UiScaleCvar>) {
     if ev.is("uiScale") {
-        scale.0 = ev.num().clamp(0.5, 1.5);
+        // The mobile client's slider reaches 160% (`assets/mobile/MobileOptions.xml`).
+        let max = if crate::mobile::enabled() { 1.6 } else { 1.5 };
+        scale.0 = ev.num().clamp(0.5, max);
     }
 }
 

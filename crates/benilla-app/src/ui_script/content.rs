@@ -8,15 +8,31 @@ static UI: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR
 /// The text of one shipped UI file, by path relative to `assets/ui`; the basename fallback for a
 /// FrameXML reference is the caller's.
 pub(super) fn read(req: &str) -> Option<String> {
-    if let Some(text) = read_source_tree(req) {
+    if let Some(text) = read_source_tree("assets/ui", req) {
         return Some(text);
     }
-    UI.get_file(req)?.contents_utf8().map(str::to_owned)
+    if let Some(file) = UI.get_file(req) {
+        return file.contents_utf8().map(str::to_owned);
+    }
+    read_mobile(req)
 }
 
-/// `assets/ui/<req>` on disk, or `None` in a player build, whose binary holds no source path.
-fn read_source_tree(req: &str) -> Option<String> {
-    let dir = crate::run_mode::dev_source_dir()?.join("assets/ui");
+/// The mobile fork's interface (`assets/mobile`, [`crate::mobile`]): a tree of its own beside the
+/// layer's, so the layer's own manifest and its tests stay the stock fork's.
+static MOBILE: include_dir::Dir<'_> =
+    include_dir::include_dir!("$CARGO_MANIFEST_DIR/assets/mobile");
+
+/// The text of one mobile interface file, by path relative to `assets/mobile`.
+pub(super) fn read_mobile(req: &str) -> Option<String> {
+    if let Some(text) = read_source_tree("assets/mobile", req) {
+        return Some(text);
+    }
+    MOBILE.get_file(req)?.contents_utf8().map(str::to_owned)
+}
+
+/// `<tree>/<req>` on disk, or `None` in a player build, whose binary holds no source path.
+fn read_source_tree(tree: &str, req: &str) -> Option<String> {
+    let dir = crate::run_mode::dev_source_dir()?.join(tree);
     std::fs::read_to_string(dir.join(req)).ok()
 }
 

@@ -55,6 +55,19 @@ impl Addon {
         Self::shipped(super::manifest::LAYER_MANIFEST)
     }
 
+    /// The mobile fork's interface under `manifest` in `assets/mobile` ([`crate::mobile`]), read
+    /// as the layer's files are.
+    pub(super) fn mobile(manifest: &str) -> Self {
+        let toc = content::read_mobile(manifest)
+            .map(|t| Toc::parse(&t))
+            .unwrap_or_default();
+        Addon {
+            name: "benilla".to_string(),
+            toc,
+            source: Source::Builtin,
+        }
+    }
+
     /// The interface one shipped `.toc` names.
     fn shipped(manifest: &str) -> Self {
         let toc = content::read(manifest)

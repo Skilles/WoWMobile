@@ -1,0 +1,7 @@
+# The mobile fork's in-game interface, loaded after benilla's layer when the client runs as the
+# mobile client (crates/benilla-app/src/mobile). Every file is ours.
+
+## Interface: 11200
+
+# The options window's Mobile page and the desktop rows a phone has no use for.
+MobileOptions.xml

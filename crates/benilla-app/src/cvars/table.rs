@@ -144,6 +144,9 @@ const fn deviates(
     }
 }
 
+/// Why the mobile fork's rows have no reference: 1.12.1 runs on a desktop with a mouse.
+const MOBILE: &str = "the mobile fork's own — 1.12.1 has no touch screen, controller or launcher";
+
 /// A row the reference has no counterpart for.
 const fn ours(name: &'static str, default: &'static str, why: &'static str) -> Registered {
     Registered {
@@ -826,6 +829,23 @@ pub(crate) const REGISTERED: &[Registered] = &[
         "benilla's own — 1.12 has no player-side perf log; its nearest thing is the \
          Ctrl+R framerate label, a number with no file behind it",
     ),
+    // The mobile fork's settings (`crate::mobile`), its options page's rows. 1.12 has no touch
+    // screen, controller or launcher, so none has a reference counterpart.
+    ours("mobileTouchControls", "1", MOBILE),
+    ours("mobileView", "combat", MOBILE),
+    ours("mobileLookSpeed", "1", MOBILE),
+    ours("mobileHoldTime", "0.5", MOBILE),
+    ours("mobileStickSize", "1", MOBILE),
+    ours("mobileStickZone", "0.42", MOBILE),
+    ours("mobileControlsAlpha", "0.8", MOBILE),
+    ours("mobileLayout", "", MOBILE),
+    ours("mobileRingBar", "1", MOBILE),
+    ours("mobileGamepad", "1", MOBILE),
+    ours("mobileGamepadLook", "1", MOBILE),
+    ours("mobileGamepadInvert", "0", MOBILE),
+    ours("mobileGamepadBindings", "", MOBILE),
+    ours("mobileAutoLogin", "1", MOBILE),
+    ours("mobileRemoteConsole", "0", MOBILE),
     // `lastCharacterIndex` (`0x402d93`, "0" `0x82e570`, category 4, handle `[0x882674]`), help
     // "Last character selected": a 0-based row (the selection cell `[0x83856c]` under `"%d"`), so
     // "0" is the first character. It mirrors
