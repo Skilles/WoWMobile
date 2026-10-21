@@ -24,6 +24,41 @@
         BENILLA_MOBILE_TIP_CONSOLE = "Let a computer on your network drive the game through "
             .. "WoWMobile's remote console, for debugging. Leave it off otherwise."
         BENILLA_MOBILE_TIP_DESKTOP = "Not used on this device."
+        BENILLA_MOBILE_TIP_MAX_FPS = "The most frames a second the game draws. Fewer frames keep "
+            .. "the phone cooler and the battery fuller; 120 needs a ProMotion display."
+        BENILLA_MOBILE_TIP_PRESETS = "Set every row above at once: Battery Saver for long play "
+            .. "on a warm phone, Smooth for 120 frames a second on a ProMotion display."
+
+        -- The Graphics page's own rows: the frame-rate limit, below Render Scale.
+        table.insert(BENILLA_OPTIONS_PAGE_ROWS.Graphics, "RowFrameRate")
+
+        -- Each preset's value for every Graphics row it sets, by the row's CVar.
+        BENILLA_MOBILE_GRAPHICS_PRESETS = {
+            battery = { mobileMaxFps = "30", renderScale = "0.6", farclip = "277",
+                WorldDetail = "0", spellEffectLevel = "0", weatherDensity = "0" },
+            balanced = { mobileMaxFps = "60", renderScale = "0.75", farclip = "377",
+                WorldDetail = "1", spellEffectLevel = "1", weatherDensity = "1" },
+            quality = { mobileMaxFps = "60", renderScale = "1", farclip = "577",
+                WorldDetail = "2", spellEffectLevel = "2", weatherDensity = "3" },
+            smooth = { mobileMaxFps = "120", renderScale = "0.7", farclip = "377",
+                WorldDetail = "1", spellEffectLevel = "1", weatherDensity = "1" },
+        }
+
+        -- Written outright, as the page's Defaults button writes, staged edits dropped.
+        function BenillaMobileGraphics_ApplyPreset(key)
+            local preset = BENILLA_MOBILE_GRAPHICS_PRESETS[key]
+            if not preset then return end
+            local base = "BenillaOptionsFrameContainerBodyGraphics"
+            for _, rkey in ipairs(BENILLA_OPTIONS_PAGE_ROWS.Graphics) do
+                local row = getglobal(base .. rkey)
+                local value = row and row.cvar and preset[row.cvar]
+                if value then
+                    row.pending = nil
+                    BenillaOptionsRow_Set(row, value)
+                end
+            end
+            BenillaOptionsPage_Refresh("Graphics")
+        end
 
         table.insert(BENILLA_OPTIONS_CATEGORY_KEYS, "Mobile")
         BENILLA_OPTIONS_PAGE_ROWS.Mobile = {
@@ -274,6 +309,66 @@
                     BenillaOptionsRow_OnLoad(this, "mobileRemoteConsole", "Remote Console", "BENILLA_MOBILE_TIP_CONSOLE")
                 </OnLoad></Scripts>
             </Frame>
+        </Frames>
+    </Frame>
+    <!-- The Graphics page's frame-rate limit and presets, under Render Scale. -->
+    <Frame name="BenillaOptionsFrameContainerBodyGraphicsRowFrameRate" inherits="BenillaOptionsDropdownRowTemplate"
+        parent="BenillaOptionsFrameContainerBodyGraphics">
+        <Anchors>
+            <Anchor point="TOPLEFT" relativeTo="BenillaOptionsFrameContainerBodyGraphicsRowRenderScale" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+            <Anchor point="TOPRIGHT" relativeTo="BenillaOptionsFrameContainerBodyGraphicsRowRenderScale" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+        </Anchors>
+        <Scripts><OnLoad>
+            BenillaOptionsRow_OnLoad(this, "mobileMaxFps", "Frame Rate Limit", "BENILLA_MOBILE_TIP_MAX_FPS")
+            BenillaOptionsDropdownRow_Setup(this, {
+                { text = "30 fps", value = "30" },
+                { text = "40 fps", value = "40" },
+                { text = "60 fps", value = "60" },
+                { text = "120 fps", value = "120" },
+            })
+        </OnLoad></Scripts>
+    </Frame>
+    <Frame name="BenillaOptionsFrameContainerBodyGraphicsPresets" parent="BenillaOptionsFrameContainerBodyGraphics">
+        <Size><AbsDimension x="10" y="28"/></Size>
+        <Anchors>
+            <Anchor point="TOPLEFT" relativeTo="BenillaOptionsFrameContainerBodyGraphicsRowFrameRate" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-16"/></Offset></Anchor>
+            <Anchor point="TOPRIGHT" relativeTo="BenillaOptionsFrameContainerBodyGraphicsRowFrameRate" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-16"/></Offset></Anchor>
+        </Anchors>
+        <Layers>
+            <Layer level="ARTWORK">
+                <FontString name="$parentLabel" inherits="GameFontNormalSmall" text="Presets">
+                    <Anchors><Anchor point="LEFT"><Offset><AbsDimension x="34" y="0"/></Offset></Anchor></Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        <Frames>
+            <Button name="$parentBattery" inherits="UIPanelButtonTemplate" text="Battery Saver">
+                <Size><AbsDimension x="112" y="24"/></Size>
+                <Anchors><Anchor point="LEFT"><Offset><AbsDimension x="225" y="0"/></Offset></Anchor></Anchors>
+                <Scripts>
+                    <OnClick>BenillaMobileGraphics_ApplyPreset("battery")</OnClick>
+                    <OnEnter>
+                        GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
+                        GameTooltip:SetText(BENILLA_MOBILE_TIP_PRESETS, nil, nil, nil, nil, 1)
+                    </OnEnter>
+                    <OnLeave>GameTooltip:Hide()</OnLeave>
+                </Scripts>
+            </Button>
+            <Button name="$parentBalanced" inherits="UIPanelButtonTemplate" text="Balanced">
+                <Size><AbsDimension x="90" y="24"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="$parentBattery" relativePoint="RIGHT"><Offset><AbsDimension x="6" y="0"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaMobileGraphics_ApplyPreset("balanced")</OnClick></Scripts>
+            </Button>
+            <Button name="$parentQuality" inherits="UIPanelButtonTemplate" text="Quality">
+                <Size><AbsDimension x="90" y="24"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="$parentBalanced" relativePoint="RIGHT"><Offset><AbsDimension x="6" y="0"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaMobileGraphics_ApplyPreset("quality")</OnClick></Scripts>
+            </Button>
+            <Button name="$parentSmooth" inherits="UIPanelButtonTemplate" text="Smooth">
+                <Size><AbsDimension x="90" y="24"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="$parentQuality" relativePoint="RIGHT"><Offset><AbsDimension x="6" y="0"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaMobileGraphics_ApplyPreset("smooth")</OnClick></Scripts>
+            </Button>
         </Frames>
     </Frame>
 </Ui>

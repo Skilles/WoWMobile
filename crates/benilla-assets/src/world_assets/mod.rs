@@ -74,22 +74,24 @@ pub fn sprite_key(path: &str) -> String {
 /// Interface textures made in code rather than read from a file, by [`sprite_key`]: a fork's own
 /// art, which no install holds (the mobile client's control rings). Registered at startup and
 /// answered before the loose files and the chain, by every sprite load and probe.
-static GENERATED_SPRITES: std::sync::RwLock<Option<HashMap<String, (u32, u32, Arc<Vec<u8>>)>>> =
+static GENERATED_SPRITES: std::sync::RwLock<Option<HashMap<String, GeneratedSprite>>> =
     std::sync::RwLock::new(None);
+
+/// A generated texture's width, height and RGBA texels.
+type GeneratedSprite = (u32, u32, Arc<Vec<u8>>);
 
 /// Make `path` an interface texture of `width` by `height` RGBA texels.
 pub fn register_generated_sprite(path: &str, width: u32, height: u32, rgba: Vec<u8>) {
     debug_assert_eq!(rgba.len(), (width * height * 4) as usize);
-    let mut map = GENERATED_SPRITES
-        .write()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut map = GENERATED_SPRITES.write().unwrap_or_else(|e| e.into_inner());
     map.get_or_insert_with(HashMap::new)
         .insert(sprite_key(path), (width, height, Arc::new(rgba)));
 }
 
 fn has_generated_sprite(path: &str) -> bool {
     let map = GENERATED_SPRITES.read().unwrap_or_else(|e| e.into_inner());
-    map.as_ref().is_some_and(|m| m.contains_key(&sprite_key(path)))
+    map.as_ref()
+        .is_some_and(|m| m.contains_key(&sprite_key(path)))
 }
 
 fn generated_sprite(path: &str) -> Option<(u32, u32, Vec<u8>)> {

@@ -6,6 +6,7 @@ pub(crate) mod art;
 pub(crate) mod console;
 pub(crate) mod gamepad;
 pub(crate) mod launcher;
+pub(crate) mod power;
 
 /// `assets/mobile`'s manifest for the in-game interface.
 pub(crate) const WORLD_MANIFEST: &str = "mobile.toc";
@@ -41,6 +42,9 @@ impl bevy::app::Plugin for MobilePlugin {
                 Update,
                 gamepad::serve_pad_lua.in_set(crate::ui_script::UiDrain),
             )
+            .init_resource::<power::FrameCap>()
+            .add_observer(power::on_cvar)
+            .add_systems(Last, power::cap_frame_rate)
             .add_observer(launcher::on_cvar)
             .add_systems(
                 Update,

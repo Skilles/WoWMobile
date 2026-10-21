@@ -13,7 +13,8 @@
 //!   `type <text>`: text, as the on-screen keyboard sends it.
 //! - `shot`: a screenshot to `benilla-config/Screenshots/console-<n>.png`; the reply names it.
 //! - `console <line>`: one `/console` line; `state`: where the client is; `size`: the window;
-//!   `focus`: the EditBox holding the keyboard; `log [text]`: the recent log lines (the crash
+//!   `focus`: the EditBox holding the keyboard; `state` also gives the last frame's time and,
+//!   on iOS, the thermal state; `log [text]`: the recent log lines (the crash
 //!   report's ring, so `RUST_LOG` at launch decides what is in it), those holding `text` if given;
 //!   `target`: the selected unit's guid, NPC flags and quest-giver status.
 
@@ -506,10 +507,17 @@ fn state(world: &mut World) -> String {
     let client = world
         .get_resource::<State<crate::client_state::ClientState>>()
         .map(|s| format!("{:?}", s.get()));
-    reply(
-        true,
-        format!("client={}", client.unwrap_or_else(|| "?".into())),
-    )
+    let mut out = format!("client={}", client.unwrap_or_else(|| "?".into()));
+    if let Some(time) = world.get_resource::<Time<Real>>() {
+        let dt = time.delta_secs();
+        if dt > 0.0 {
+            out += &format!(" frame_ms={:.1}", dt * 1000.0);
+        }
+    }
+    if let Some(t) = crate::mobile::power::thermal_state() {
+        out += &format!(" thermal={t}");
+    }
+    reply(true, out)
 }
 
 fn size(world: &mut World) -> String {

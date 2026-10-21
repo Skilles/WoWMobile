@@ -53,7 +53,10 @@ fn ring(src: &RgbaImage) -> Option<RgbaImage> {
     let (cx, cy) = hole_centre(src)?;
     // The square about the hole, clear where it runs past the source's edge; premultiplied, as
     // Lanczos rings at a hard alpha edge on straight colour.
-    let (x0, y0) = ((cx - HALF as f32).round() as i64, (cy - HALF as f32).round() as i64);
+    let (x0, y0) = (
+        (cx - HALF as f32).round() as i64,
+        (cy - HALF as f32).round() as i64,
+    );
     let cut = RgbaImage::from_fn(HALF * 2, HALF * 2, |x, y| {
         let (sx, sy) = (x0 + i64::from(x), y0 + i64::from(y));
         if sx < 0 || sy < 0 || sx >= i64::from(src.width()) || sy >= i64::from(src.height()) {
@@ -91,10 +94,16 @@ mod tests {
         let src = source().expect("the stock ring");
         let (cx, cy) = hole_centre(&src).unwrap();
         // The ring sits in the source's top-left corner.
-        assert!((15.0..25.0).contains(&cx) && (15.0..25.0).contains(&cy), "{cx},{cy}");
+        assert!(
+            (15.0..25.0).contains(&cx) && (15.0..25.0).contains(&cy),
+            "{cx},{cy}"
+        );
         let px = ring(&src).unwrap();
         assert_eq!(px.dimensions(), (SIZE, SIZE));
-        assert!(px.get_pixel(SIZE / 2, SIZE / 2)[3] < 16, "the hole is clear");
+        assert!(
+            px.get_pixel(SIZE / 2, SIZE / 2)[3] < 16,
+            "the hole is clear"
+        );
         assert_eq!(px.get_pixel(0, 0)[3], 0, "a corner is clear");
     }
 }

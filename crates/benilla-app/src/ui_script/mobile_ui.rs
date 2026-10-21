@@ -295,6 +295,33 @@ mod tests {
             .unwrap());
     }
 
+    #[test]
+    fn a_graphics_preset_writes_every_row_it_names() {
+        benilla_formats::wow_data_or_skip!();
+        let s = options_with_mobile_page();
+        s.run(
+            r#"ShowUIPanel(BenillaOptionsFrame); BenillaOptionsFrame_SelectCategory("Graphics")
+               BenillaOptionsFrameContainerBodyGraphicsPresetsBattery:Click()"#,
+        )
+        .unwrap();
+        assert!(s.errors().is_empty(), "{:?}", s.errors());
+        for (cvar, want) in [
+            ("mobileMaxFps", "30"),
+            ("renderScale", "0.6"),
+            ("farclip", "277"),
+            ("WorldDetail", "0"),
+            ("spellEffectLevel", "0"),
+            ("weatherDensity", "0"),
+        ] {
+            let got: String = s.eval(&format!("return GetCVar(\"{cvar}\")")).unwrap();
+            assert_eq!(got, want, "{cvar}");
+        }
+        let shown: String = s
+            .eval("return UIDropDownMenu_GetText(BenillaOptionsFrameContainerBodyGraphicsRowFrameRateDropdown)")
+            .unwrap();
+        assert_eq!(shown, "30 fps");
+    }
+
     /// Every file the two mobile manifests name ships.
     #[test]
     fn the_mobile_manifests_name_shipped_files() {

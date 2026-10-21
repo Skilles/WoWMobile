@@ -266,7 +266,7 @@ pub(crate) fn refresh_period(
 }
 
 /// How much longer the frame that began at `last` must wait to last a whole `period`.
-fn pace_wait(last: Option<Instant>, now: Instant, period: Duration) -> Duration {
+pub(crate) fn pace_wait(last: Option<Instant>, now: Instant, period: Duration) -> Duration {
     last.map_or(Duration::ZERO, |last| {
         period.saturating_sub(now.saturating_duration_since(last))
     })
@@ -328,7 +328,9 @@ pub(crate) fn on_cvar(
             Some(size) => cfg.windowed = size,
             None => warn!("cvar gxResolution: unparseable value '{}' ignored", ev.new),
         },
-        "gxvsync" => cfg.vsync = ev.flag(),
+        // Deviation: the mobile client always waits for the display, whatever a copied desktop
+        // config says; its Vertical Sync row is greyed out, and an unsynced phone runs hot.
+        "gxvsync" => cfg.vsync = ev.flag() || crate::mobile::enabled(),
         // The reference's polarity: `1` is windowed (the row is "Windowed Mode").
         "gxwindow" => cfg.display = display_from_flag(v),
         // Latched like `gxWindow`: the commit is `RestartGx`, which rebuilds the window
