@@ -209,9 +209,11 @@
         <Layers>
             <Layer level="ARTWORK">
                 <FontString name="$parentName" inherits="GlueFontNormalLarge" justifyH="LEFT">
+                    <Size><AbsDimension x="360" y="24"/></Size>
                     <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="14" y="-8"/></Offset></Anchor></Anchors>
                 </FontString>
                 <FontString name="$parentAddress" inherits="GlueFontDisableSmall" justifyH="LEFT">
+                    <Size><AbsDimension x="360" y="16"/></Size>
                     <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="14" y="10"/></Offset></Anchor></Anchors>
                 </FontString>
             </Layer>
@@ -232,9 +234,11 @@
         <Layers>
             <Layer level="ARTWORK">
                 <FontString name="$parentName" inherits="GlueFontHighlightLarge" justifyH="LEFT">
+                    <Size><AbsDimension x="260" y="24"/></Size>
                     <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="14" y="-8"/></Offset></Anchor></Anchors>
                 </FontString>
                 <FontString name="$parentState" inherits="GlueFontNormalSmall" justifyH="LEFT">
+                    <Size><AbsDimension x="260" y="16"/></Size>
                     <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="14" y="10"/></Offset></Anchor></Anchors>
                 </FontString>
             </Layer>
@@ -283,10 +287,12 @@
         </Backdrop>
         <Layers>
             <Layer level="ARTWORK">
-                <FontString name="BenillaLauncherServersTitle" inherits="GlueFontNormalLarge" text="Servers">
+                <FontString name="BenillaLauncherServersTitle" inherits="GlueFontNormalLarge" text="Servers" justifyH="LEFT">
+                    <Size><AbsDimension x="300" y="24"/></Size>
                     <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="30" y="-18"/></Offset></Anchor></Anchors>
                 </FontString>
-                <FontString name="BenillaLauncherAccountsTitle" inherits="GlueFontNormalLarge" text="Accounts">
+                <FontString name="BenillaLauncherAccountsTitle" inherits="GlueFontNormalLarge" text="Accounts" justifyH="LEFT">
+                    <Size><AbsDimension x="300" y="24"/></Size>
                     <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="430" y="-18"/></Offset></Anchor></Anchors>
                 </FontString>
                 <FontString name="BenillaLauncherEmpty" inherits="GlueFontHighlight" justifyH="LEFT"
@@ -366,7 +372,8 @@
                 <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="22" y="14"/></Offset></Anchor></Anchors>
                 <Layers>
                     <Layer level="ARTWORK">
-                        <FontString inherits="GlueFontNormal" text="Sign in automatically">
+                        <FontString inherits="GlueFontNormal" text="Sign in automatically" justifyH="LEFT">
+                            <Size><AbsDimension x="300" y="20"/></Size>
                             <Anchors><Anchor point="LEFT" relativePoint="RIGHT"><Offset><AbsDimension x="4" y="0"/></Offset></Anchor></Anchors>
                         </FontString>
                     </Layer>
@@ -413,18 +420,23 @@
         <Layers>
             <Layer level="ARTWORK">
                 <FontString name="BenillaLauncherEditorTitle" inherits="GlueFontNormalLarge">
+                    <Size><AbsDimension x="500" y="24"/></Size>
                     <Anchors><Anchor point="TOP"><Offset><AbsDimension x="0" y="-18"/></Offset></Anchor></Anchors>
                 </FontString>
                 <FontString name="BenillaLauncherEditorLabel1" inherits="GlueFontNormal" justifyH="LEFT">
+                    <Size><AbsDimension x="520" y="20"/></Size>
                     <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="40" y="-56"/></Offset></Anchor></Anchors>
                 </FontString>
                 <FontString name="BenillaLauncherEditorLabel2" inherits="GlueFontNormal" justifyH="LEFT">
+                    <Size><AbsDimension x="520" y="20"/></Size>
                     <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="40" y="-142"/></Offset></Anchor></Anchors>
                 </FontString>
                 <FontString name="BenillaLauncherEditorLabel3" inherits="GlueFontNormal" justifyH="LEFT">
+                    <Size><AbsDimension x="520" y="20"/></Size>
                     <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="40" y="-228"/></Offset></Anchor></Anchors>
                 </FontString>
                 <FontString name="BenillaLauncherEditorError" inherits="GlueFontRed">
+                    <Size><AbsDimension x="520" y="20"/></Size>
                     <Anchors><Anchor point="BOTTOM"><Offset><AbsDimension x="0" y="76"/></Offset></Anchor></Anchors>
                 </FontString>
             </Layer>

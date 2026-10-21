@@ -394,19 +394,20 @@ pub(crate) fn forget_refused(address: &str, user: &str) {
     }
 }
 
-/// Where passwords are kept: the Keychain on iOS; elsewhere (a desktop working on the mobile
-/// interface) a file beside the settings, so a test never writes to a desktop's keychain.
+/// Where passwords are kept: the Keychain on an iPhone or iPad; elsewhere (the Simulator, whose
+/// ad-hoc build has no Keychain entitlement, or a desktop working on the mobile interface) a file
+/// beside the settings, so a test never writes to a desktop's keychain.
 pub(crate) mod secrets {
-    #[cfg(target_os = "ios")]
+    #[cfg(all(target_os = "ios", not(target_abi = "sim")))]
     const SERVICE: &str = "dev.benilla.launcher";
 
-    #[cfg(target_os = "ios")]
+    #[cfg(all(target_os = "ios", not(target_abi = "sim")))]
     pub(crate) fn get(key: &str) -> Option<String> {
         let bytes = security_framework::passwords::get_generic_password(SERVICE, key).ok()?;
         String::from_utf8(bytes).ok()
     }
 
-    #[cfg(target_os = "ios")]
+    #[cfg(all(target_os = "ios", not(target_abi = "sim")))]
     pub(crate) fn set(key: &str, value: &str) {
         if let Err(e) =
             security_framework::passwords::set_generic_password(SERVICE, key, value.as_bytes())
@@ -415,13 +416,13 @@ pub(crate) mod secrets {
         }
     }
 
-    #[cfg(target_os = "ios")]
+    #[cfg(all(target_os = "ios", not(target_abi = "sim")))]
     pub(crate) fn delete(key: &str) -> bool {
         security_framework::passwords::delete_generic_password(SERVICE, key).is_ok()
     }
 
     /// The first iOS builds' single remembered login, taken out of the Keychain.
-    #[cfg(target_os = "ios")]
+    #[cfg(all(target_os = "ios", not(target_abi = "sim")))]
     pub(crate) fn take_legacy() -> Option<(String, String)> {
         use security_framework::passwords as kc;
         let bytes = kc::get_generic_password("dev.benilla.login", "last").ok()?;
@@ -431,12 +432,12 @@ pub(crate) mod secrets {
         Some((user.to_string(), pass.to_string()))
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(all(target_os = "ios", not(target_abi = "sim"))))]
     fn file() -> Option<std::path::PathBuf> {
         Some(crate::local_state::home()?.join("launcher-secrets.json"))
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(all(target_os = "ios", not(target_abi = "sim"))))]
     fn read_all() -> std::collections::BTreeMap<String, String> {
         file()
             .and_then(|p| std::fs::read_to_string(p).ok())
@@ -444,26 +445,26 @@ pub(crate) mod secrets {
             .unwrap_or_default()
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(all(target_os = "ios", not(target_abi = "sim"))))]
     fn write_all(all: &std::collections::BTreeMap<String, String>) {
         if let (Some(p), Ok(text)) = (file(), serde_json::to_string(all)) {
             let _ = std::fs::write(p, text);
         }
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(all(target_os = "ios", not(target_abi = "sim"))))]
     pub(crate) fn get(key: &str) -> Option<String> {
         read_all().remove(key)
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(all(target_os = "ios", not(target_abi = "sim"))))]
     pub(crate) fn set(key: &str, value: &str) {
         let mut all = read_all();
         all.insert(key.to_string(), value.to_string());
         write_all(&all);
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(all(target_os = "ios", not(target_abi = "sim"))))]
     pub(crate) fn delete(key: &str) -> bool {
         let mut all = read_all();
         let had = all.remove(key).is_some();
@@ -471,7 +472,7 @@ pub(crate) mod secrets {
         had
     }
 
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(all(target_os = "ios", not(target_abi = "sim"))))]
     pub(crate) fn take_legacy() -> Option<(String, String)> {
         None
     }
