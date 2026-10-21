@@ -24,12 +24,13 @@ pub(crate) fn follow_editbox_focus(
     script: Option<NonSend<UiScript>>,
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     buttons: Res<ButtonInput<MouseButton>>,
-    mut dismissed: Local<Dismissed>,
+    mut dismissed: Local<crate::ui_script::VmMemo<Dismissed>>,
 ) {
     let Ok(mut window) = windows.single_mut() else {
         return;
     };
     let rect = script.as_ref().and_then(|s| s.focused_editbox_rect());
+    let dismissed = dismissed.get_for(script.as_deref());
     let s = crate::ui_script::seam_scale(window.height());
     if rect.is_none() || dismissed.0.is_some_and(|d| Some(d) != rect) {
         dismissed.0 = None;
