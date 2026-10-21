@@ -34,6 +34,11 @@ pub(crate) struct ConsolePlugin;
 
 impl Plugin for ConsolePlugin {
     fn build(&self, app: &mut App) {
+        // Where it can be switched on: the mobile client (its options page), or a desktop run
+        // that asks for it.
+        if !crate::mobile::enabled() && std::env::var_os("BENILLA_CONSOLE").is_none() {
+            return;
+        }
         let (tx, rx) = crossbeam_channel::unbounded();
         app.insert_resource(Inbox {
             tx,
@@ -44,8 +49,11 @@ impl Plugin for ConsolePlugin {
         .init_resource::<LuaQueue>()
         .add_observer(on_cvar)
         .add_systems(Startup, start_from_env)
-        .add_systems(PreUpdate, release_gestures)
-        .add_systems(Update, (serve_world, serve_lua).chain());
+        // Ahead of the touch router (`PreUpdate`), which takes them.
+        .add_systems(First, release_gestures)
+        // The whole world, so out of `Update`'s ordering; its Lua waits for the next drain.
+        .add_systems(Last, serve_world)
+        .add_systems(Update, serve_lua.in_set(crate::ui_script::UiDrain));
     }
 }
 

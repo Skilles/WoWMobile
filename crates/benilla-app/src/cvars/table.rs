@@ -845,6 +845,7 @@ pub(crate) const REGISTERED: &[Registered] = &[
     ours("mobileGamepadInvert", "0", MOBILE),
     ours("mobileGamepadBindings", "", MOBILE),
     ours("mobileAutoLogin", "1", MOBILE),
+    ours("mobileRealmOverride", "", MOBILE),
     ours("mobileRemoteConsole", "0", MOBILE),
     // `lastCharacterIndex` (`0x402d93`, "0" `0x82e570`, category 4, handle `[0x882674]`), help
     // "Last character selected": a 0-based row (the selection cell `[0x83856c]` under `"%d"`), so

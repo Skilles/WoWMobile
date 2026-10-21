@@ -855,6 +855,7 @@ pub(crate) fn login(cycles: &Cycles, host: &str) {
             user: USER.into(),
             pass: PASS.into(),
             host: host.into(),
+            realm_override: None,
             locale: benilla_protocol::auth::LOCALE_TAG_EN_US,
             generation: cycles.abandon.load(Ordering::SeqCst),
         })

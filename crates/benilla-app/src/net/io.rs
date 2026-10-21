@@ -74,9 +74,25 @@ pub(crate) struct LoginRequest {
     /// The realmlist to dial, `host[:port]`, per attempt so an edit mid-dial cannot retarget the
     /// connection in flight.
     pub(crate) host: String,
+    /// The world server to dial in place of the realm list's address, `host[:port]` (a port-less
+    /// one keeps the realm's port): a server behind NAT hands out an address only its own network
+    /// reaches. The mobile launcher's (`crate::mobile::launcher`).
+    pub(crate) realm_override: Option<String>,
     /// The locale tag the logon challenge carries ([`crate::ui_script::client_locale`]).
     pub(crate) locale: u32,
     pub(crate) generation: u64,
+}
+
+/// The world server to dial: realmd's `realm`, or `over` with realm's port when it names none.
+fn world_address(realm: &str, over: Option<&str>) -> String {
+    match over {
+        None => realm.to_string(),
+        Some(o) if o.contains(':') => o.to_string(),
+        Some(o) => match realm.rsplit_once(':') {
+            Some((_, port)) => format!("{o}:{port}"),
+            None => o.to_string(),
+        },
+    }
 }
 
 /// The park-answer receivers: credentials, and the realm and character requests on the one
@@ -646,7 +662,7 @@ fn world(
             realm.address,
             logon.realms.len()
         );
-        let world_addr = realm.address.clone();
+        let world_addr = world_address(&realm.address, req.realm_override.as_deref());
 
         stage(LoginStage::Handshaking);
         // For the queue dialog to name; the roster that carries it comes after the queue.
@@ -1982,5 +1998,23 @@ mod rtt_tests {
             .traffic
             .as_ref()
             .is_some_and(|t| std::sync::Arc::ptr_eq(t, &traffic)));
+    }
+}
+
+#[cfg(test)]
+mod world_address_tests {
+    use super::world_address;
+
+    #[test]
+    fn an_override_replaces_the_host_and_keeps_the_port_it_does_not_name() {
+        assert_eq!(world_address("172.18.0.5:8085", None), "172.18.0.5:8085");
+        assert_eq!(
+            world_address("172.18.0.5:8085", Some("play.example.com")),
+            "play.example.com:8085"
+        );
+        assert_eq!(
+            world_address("172.18.0.5:8085", Some("play.example.com:9000")),
+            "play.example.com:9000"
+        );
     }
 }

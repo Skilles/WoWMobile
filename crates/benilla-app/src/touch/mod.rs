@@ -42,7 +42,8 @@ impl Plugin for TouchPlugin {
             .add_observer(on_cvar)
             .add_systems(Startup, (spawn_overlay, defer_edge_gestures))
             .add_systems(PreUpdate, route_touches.before(InputSystems))
-            .add_systems(Update, draw_overlay);
+            // Where UI nodes are placed for this frame's layout, apart from the world's systems.
+            .add_systems(PostUpdate, draw_overlay.before(bevy::ui::UiSystems::Layout));
     }
 }
 

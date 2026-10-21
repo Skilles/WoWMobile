@@ -12,6 +12,11 @@ pub(super) fn load(script: &UiScript, manifest: &str) -> Vec<String> {
     if let Err(e) = script.run("BENILLA_MOBILE = 1") {
         return vec![format!("benilla-mobile: {e}")];
     }
+    if manifest == crate::mobile::GLUE_MANIFEST {
+        if let Err(e) = crate::mobile::launcher::install(script) {
+            return vec![format!("benilla-mobile: the launcher's functions: {e}")];
+        }
+    }
     let mobile = super::addons::Addon::mobile(manifest);
     mobile.load_files(script, &mobile.toc.files)
 }

@@ -1,3 +1,465 @@
 <Ui xmlns="http://www.blizzard.com/wow/ui/">
-    <!-- The launcher over the stock login screen: server profiles and saved accounts. -->
+    <!-- The launcher over the stock login screen: saved servers on the left, the accounts saved on
+         the selected one on the right, one tap to sign in. Servers and accounts are the host's
+         (crates/benilla-app/src/mobile/launcher.rs), through the BenillaLauncher_* functions; a
+         sign-in sets the realmlist and the realm override, fills the stock boxes and runs
+         AccountLogin_Login, so the stock connecting dialog and errors show. "Sign In Manually"
+         hides the launcher and shows the stock boxes; an account typed there is saved once it
+         reaches character select. Sized for a finger. -->
+    <Script><![CDATA[
+        BENILLA_LAUNCHER_ROWS = 5
+
+        BenillaLauncher = { server = 1, serverTop = 0, accountTop = 0 }
+
+        function BenillaLauncher_Refresh()
+            local n = BenillaLauncher_NumProfiles()
+            if BenillaLauncher.server > n then BenillaLauncher.server = n end
+            if BenillaLauncher.server < 1 then BenillaLauncher.server = 1 end
+            for k = 1, BENILLA_LAUNCHER_ROWS do
+                local i = k + BenillaLauncher.serverTop
+                local row = getglobal("BenillaLauncherServer" .. k)
+                local name, address = BenillaLauncher_GetProfile(i)
+                if name then
+                    row.index = i
+                    getglobal(row:GetName() .. "Name"):SetText(name)
+                    getglobal(row:GetName() .. "Address"):SetText(address)
+                    if i == BenillaLauncher.server then row:LockHighlight() else row:UnlockHighlight() end
+                    row:Show()
+                else
+                    row:Hide()
+                end
+            end
+            local _, _, _, accounts = BenillaLauncher_GetProfile(BenillaLauncher.server)
+            accounts = accounts or 0
+            for k = 1, BENILLA_LAUNCHER_ROWS do
+                local j = k + BenillaLauncher.accountTop
+                local row = getglobal("BenillaLauncherAccount" .. k)
+                local name, saved = BenillaLauncher_GetAccount(BenillaLauncher.server, j)
+                if name then
+                    row.index = j
+                    getglobal(row:GetName() .. "Name"):SetText(name)
+                    if saved then
+                        getglobal(row:GetName() .. "State"):SetText("Tap to sign in")
+                    else
+                        getglobal(row:GetName() .. "State"):SetText("Tap to enter the password")
+                    end
+                    row:Show()
+                else
+                    row:Hide()
+                end
+            end
+            if n == 0 then
+                BenillaLauncherEmpty:Show()
+                BenillaLauncherEditServer:Disable()
+                BenillaLauncherRemoveServer:Disable()
+                BenillaLauncherAddAccount:Disable()
+            else
+                BenillaLauncherEmpty:Hide()
+                BenillaLauncherEditServer:Enable()
+                BenillaLauncherRemoveServer:Enable()
+                BenillaLauncherAddAccount:Enable()
+            end
+            if accounts == 0 and n > 0 then BenillaLauncherNoAccounts:Show() else BenillaLauncherNoAccounts:Hide() end
+            BenillaLauncherAuto:SetChecked(BenillaLauncher_AutoLoginEnabled())
+        end
+
+        -- The stock boxes hide under the launcher, so their focus raises no keyboard.
+        function BenillaLauncher_ShowStock(show)
+            local stock = { AccountLoginAccountEdit, AccountLoginPasswordEdit, AccountLoginLoginButton,
+                AccountLoginSaveAccountName, AccountLoginSaveAccountNameText }
+            for _, f in ipairs(stock) do
+                if f then
+                    if show then f:Show() else f:Hide() end
+                end
+            end
+            if show then
+                BenillaLauncherFrame:Hide()
+                BenillaLauncherBack:Show()
+                AccountLoginAccountEdit:SetFocus()
+            else
+                AccountLoginAccountEdit:ClearFocus()
+                AccountLoginPasswordEdit:ClearFocus()
+                BenillaLauncherBack:Hide()
+                BenillaLauncherFrame:Show()
+            end
+        end
+
+        function BenillaLauncher_SignIn(i, j)
+            local user, pass, address, over = BenillaLauncher_Credentials(i, j)
+            if not user then return end
+            if not pass then
+                BenillaLauncherEditor_Open("account", i, j)
+                return
+            end
+            -- The glue has no SetCVar; "-" is no override, as ConsoleExec writes no empty value.
+            ConsoleExec("realmList " .. address)
+            if over and over ~= "" then
+                ConsoleExec("mobileRealmOverride " .. over)
+            else
+                ConsoleExec("mobileRealmOverride -")
+            end
+            AccountLoginAccountEdit:SetText(user)
+            AccountLoginPasswordEdit:SetText(pass)
+            -- The realmlist write lands at the next CVar flush; the login reads it then.
+            BenillaLauncher.pendingLogin = 2
+        end
+
+        function BenillaLauncherFrame_OnUpdate()
+            if BenillaLauncher.pendingLogin then
+                BenillaLauncher.pendingLogin = BenillaLauncher.pendingLogin - 1
+                if BenillaLauncher.pendingLogin <= 0 then
+                    BenillaLauncher.pendingLogin = nil
+                    AccountLogin_Login()
+                end
+            end
+        end
+
+        function BenillaLauncherFrame_OnShow()
+            BenillaLauncher_ShowStock(nil)
+            local i, j = BenillaLauncher_GetLast()
+            if i then BenillaLauncher.server = i end
+            BenillaLauncher_Refresh()
+            local ai, aj = BenillaLauncher_TakeAutoLogin()
+            if ai then
+                BenillaLauncher.server = ai
+                BenillaLauncher_Refresh()
+                BenillaLauncher_SignIn(ai, aj)
+            end
+        end
+
+        -- ── The editor: a server (name, address, realm override) or an account (name, password) ──
+        function BenillaLauncherEditor_Open(kind, i, j)
+            local e = BenillaLauncherEditor
+            e.kind, e.server, e.account = kind, i, j
+            BenillaLauncherEditorError:SetText("")
+            if kind == "server" then
+                local name, address, over = BenillaLauncher_GetProfile(i)
+                BenillaLauncherEditorTitle:SetText(i and "Edit Server" or "Add Server")
+                BenillaLauncherEditorLabel1:SetText("Name")
+                BenillaLauncherEditorLabel2:SetText("Server Address (realmlist)")
+                BenillaLauncherEditorLabel3:SetText("Realm Address Override (for servers behind NAT)")
+                BenillaLauncherEditorField1:SetText(name or "")
+                BenillaLauncherEditorField2:SetText(address or "")
+                BenillaLauncherEditorField3:SetText(over or "")
+                BenillaLauncherEditorField2:SetPassword(nil)
+                BenillaLauncherEditorField3:Show()
+                BenillaLauncherEditorLabel3:Show()
+                BenillaLauncherEditorSaveAndSignIn:Hide()
+            else
+                local name = BenillaLauncher_GetAccount(i, j)
+                BenillaLauncherEditorTitle:SetText(j and "Enter Password" or "Add Account")
+                BenillaLauncherEditorLabel1:SetText("Account Name")
+                BenillaLauncherEditorLabel2:SetText("Password")
+                BenillaLauncherEditorField1:SetText(name or "")
+                BenillaLauncherEditorField2:SetText("")
+                BenillaLauncherEditorField2:SetPassword(1)
+                BenillaLauncherEditorField3:Hide()
+                BenillaLauncherEditorLabel3:Hide()
+                BenillaLauncherEditorSaveAndSignIn:Show()
+            end
+            BenillaLauncherFrame:Hide()
+            e:Show()
+            if kind == "account" and j then
+                BenillaLauncherEditorField2:SetFocus()
+            else
+                BenillaLauncherEditorField1:SetFocus()
+            end
+        end
+
+        function BenillaLauncherEditor_Close()
+            BenillaLauncherEditorField1:ClearFocus()
+            BenillaLauncherEditorField2:ClearFocus()
+            BenillaLauncherEditorField3:ClearFocus()
+            BenillaLauncherEditorField2:SetText("")
+            BenillaLauncherEditor:Hide()
+            BenillaLauncherFrame:Show()
+        end
+
+        function BenillaLauncherEditor_Save(signIn)
+            local e = BenillaLauncherEditor
+            local a, b, c = BenillaLauncherEditorField1:GetText(), BenillaLauncherEditorField2:GetText(),
+                BenillaLauncherEditorField3:GetText()
+            if e.kind == "server" then
+                local index, err = BenillaLauncher_SaveProfile(e.server, a, b, c)
+                if not index then
+                    BenillaLauncherEditorError:SetText(err or "")
+                    return
+                end
+                BenillaLauncher.server = index
+            else
+                if a == "" then
+                    BenillaLauncherEditorError:SetText("Enter the account name.")
+                    return
+                end
+                local j = BenillaLauncher_SaveAccount(e.server, a, b)
+                if not j then return end
+                e.account = j
+            end
+            local kind, i, j = e.kind, e.server, e.account
+            BenillaLauncherEditor_Close()
+            BenillaLauncher_Refresh()
+            if signIn and kind == "account" then
+                BenillaLauncher_SignIn(i, j)
+            end
+        end
+    ]]></Script>
+
+    <Button name="BenillaLauncherServerTemplate" virtual="true">
+        <Size><AbsDimension x="380" y="58"/></Size>
+        <Layers>
+            <Layer level="ARTWORK">
+                <FontString name="$parentName" inherits="GlueFontNormalLarge" justifyH="LEFT">
+                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="14" y="-8"/></Offset></Anchor></Anchors>
+                </FontString>
+                <FontString name="$parentAddress" inherits="GlueFontDisableSmall" justifyH="LEFT">
+                    <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="14" y="10"/></Offset></Anchor></Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        <HighlightTexture file="Interface\Buttons\UI-Listbox-Highlight" alphaMode="ADD"/>
+        <Scripts>
+            <OnClick>
+                PlaySound("igMainMenuOptionCheckBoxOn")
+                BenillaLauncher.server = this.index
+                BenillaLauncher.accountTop = 0
+                BenillaLauncher_Refresh()
+            </OnClick>
+        </Scripts>
+    </Button>
+
+    <Button name="BenillaLauncherAccountTemplate" virtual="true">
+        <Size><AbsDimension x="380" y="58"/></Size>
+        <Layers>
+            <Layer level="ARTWORK">
+                <FontString name="$parentName" inherits="GlueFontHighlightLarge" justifyH="LEFT">
+                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="14" y="-8"/></Offset></Anchor></Anchors>
+                </FontString>
+                <FontString name="$parentState" inherits="GlueFontNormalSmall" justifyH="LEFT">
+                    <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="14" y="10"/></Offset></Anchor></Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        <Frames>
+            <Button name="$parentRemove" inherits="GlueButtonSmallTemplate" text="Remove">
+                <Size><AbsDimension x="96" y="40"/></Size>
+                <Anchors><Anchor point="RIGHT"><Offset><AbsDimension x="-8" y="0"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>
+                    BenillaLauncher_DeleteAccount(BenillaLauncher.server, this:GetParent().index)
+                    BenillaLauncher_Refresh()
+                </OnClick></Scripts>
+            </Button>
+        </Frames>
+        <HighlightTexture file="Interface\Buttons\UI-Listbox-Highlight" alphaMode="ADD"/>
+        <Scripts>
+            <OnClick>
+                PlaySound("gsLogin")
+                BenillaLauncher_SignIn(BenillaLauncher.server, this.index)
+            </OnClick>
+        </Scripts>
+    </Button>
+
+    <EditBox name="BenillaLauncherEditBoxTemplate" letters="64" autoFocus="false" virtual="true">
+        <Size><AbsDimension x="520" y="46"/></Size>
+        <Backdrop bgFile="Interface\Tooltips\UI-Tooltip-Background" edgeFile="Interface\Glues\Common\Glue-Tooltip-Border" tile="true">
+            <BackgroundInsets><AbsInset left="10" right="5" top="4" bottom="9"/></BackgroundInsets>
+            <TileSize><AbsValue val="16"/></TileSize>
+            <EdgeSize><AbsValue val="16"/></EdgeSize>
+        </Backdrop>
+        <Scripts>
+            <OnEscapePressed>BenillaLauncherEditor_Close()</OnEscapePressed>
+            <OnEnterPressed>BenillaLauncherEditor_Save(BenillaLauncherEditor.kind == "account")</OnEnterPressed>
+        </Scripts>
+        <FontString inherits="GlueEditBoxFont"/>
+        <TextInsets><AbsInset left="15" bottom="5"/></TextInsets>
+    </EditBox>
+
+    <Frame name="BenillaLauncherFrame" parent="AccountLoginUI" frameStrata="DIALOG" enableMouse="true">
+        <Size><AbsDimension x="840" y="470"/></Size>
+        <Anchors><Anchor point="CENTER"><Offset><AbsDimension x="0" y="-40"/></Offset></Anchor></Anchors>
+        <Backdrop bgFile="Interface\Tooltips\UI-Tooltip-Background" edgeFile="Interface\Glues\Common\Glue-Tooltip-Border" tile="true">
+            <BackgroundInsets><AbsInset left="10" right="5" top="4" bottom="9"/></BackgroundInsets>
+            <TileSize><AbsValue val="16"/></TileSize>
+            <EdgeSize><AbsValue val="16"/></EdgeSize>
+        </Backdrop>
+        <Layers>
+            <Layer level="ARTWORK">
+                <FontString name="BenillaLauncherServersTitle" inherits="GlueFontNormalLarge" text="Servers">
+                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="30" y="-18"/></Offset></Anchor></Anchors>
+                </FontString>
+                <FontString name="BenillaLauncherAccountsTitle" inherits="GlueFontNormalLarge" text="Accounts">
+                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="430" y="-18"/></Offset></Anchor></Anchors>
+                </FontString>
+                <FontString name="BenillaLauncherEmpty" inherits="GlueFontHighlight" justifyH="LEFT"
+                    text="No servers yet. Add the address you would type in realmlist.wtf.">
+                    <Size><AbsDimension x="370" y="80"/></Size>
+                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="30" y="-60"/></Offset></Anchor></Anchors>
+                </FontString>
+                <FontString name="BenillaLauncherNoAccounts" inherits="GlueFontHighlight" justifyH="LEFT"
+                    text="No accounts saved on this server. Add one, or sign in manually: an account that reaches character select is saved.">
+                    <Size><AbsDimension x="370" y="100"/></Size>
+                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="430" y="-60"/></Offset></Anchor></Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        <Frames>
+            <Button name="BenillaLauncherServer1" inherits="BenillaLauncherServerTemplate">
+                <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="20" y="-50"/></Offset></Anchor></Anchors>
+            </Button>
+            <Button name="BenillaLauncherServer2" inherits="BenillaLauncherServerTemplate">
+                <Anchors><Anchor point="TOPLEFT" relativeTo="BenillaLauncherServer1" relativePoint="BOTTOMLEFT"/></Anchors>
+            </Button>
+            <Button name="BenillaLauncherServer3" inherits="BenillaLauncherServerTemplate">
+                <Anchors><Anchor point="TOPLEFT" relativeTo="BenillaLauncherServer2" relativePoint="BOTTOMLEFT"/></Anchors>
+            </Button>
+            <Button name="BenillaLauncherServer4" inherits="BenillaLauncherServerTemplate">
+                <Anchors><Anchor point="TOPLEFT" relativeTo="BenillaLauncherServer3" relativePoint="BOTTOMLEFT"/></Anchors>
+            </Button>
+            <Button name="BenillaLauncherServer5" inherits="BenillaLauncherServerTemplate">
+                <Anchors><Anchor point="TOPLEFT" relativeTo="BenillaLauncherServer4" relativePoint="BOTTOMLEFT"/></Anchors>
+            </Button>
+            <Button name="BenillaLauncherAccount1" inherits="BenillaLauncherAccountTemplate">
+                <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="420" y="-50"/></Offset></Anchor></Anchors>
+            </Button>
+            <Button name="BenillaLauncherAccount2" inherits="BenillaLauncherAccountTemplate">
+                <Anchors><Anchor point="TOPLEFT" relativeTo="BenillaLauncherAccount1" relativePoint="BOTTOMLEFT"/></Anchors>
+            </Button>
+            <Button name="BenillaLauncherAccount3" inherits="BenillaLauncherAccountTemplate">
+                <Anchors><Anchor point="TOPLEFT" relativeTo="BenillaLauncherAccount2" relativePoint="BOTTOMLEFT"/></Anchors>
+            </Button>
+            <Button name="BenillaLauncherAccount4" inherits="BenillaLauncherAccountTemplate">
+                <Anchors><Anchor point="TOPLEFT" relativeTo="BenillaLauncherAccount3" relativePoint="BOTTOMLEFT"/></Anchors>
+            </Button>
+            <Button name="BenillaLauncherAccount5" inherits="BenillaLauncherAccountTemplate">
+                <Anchors><Anchor point="TOPLEFT" relativeTo="BenillaLauncherAccount4" relativePoint="BOTTOMLEFT"/></Anchors>
+            </Button>
+
+            <Button name="BenillaLauncherAddServer" inherits="GlueButtonSmallTemplate" text="Add Server">
+                <Size><AbsDimension x="124" y="48"/></Size>
+                <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="22" y="68"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaLauncherEditor_Open("server", nil, nil)</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaLauncherEditServer" inherits="GlueButtonSmallTemplate" text="Edit">
+                <Size><AbsDimension x="124" y="48"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaLauncherAddServer" relativePoint="RIGHT"><Offset><AbsDimension x="4" y="0"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaLauncherEditor_Open("server", BenillaLauncher.server, nil)</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaLauncherRemoveServer" inherits="GlueButtonSmallTemplate" text="Remove">
+                <Size><AbsDimension x="124" y="48"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaLauncherEditServer" relativePoint="RIGHT"><Offset><AbsDimension x="4" y="0"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>
+                    BenillaLauncher_DeleteProfile(BenillaLauncher.server)
+                    BenillaLauncher_Refresh()
+                </OnClick></Scripts>
+            </Button>
+            <Button name="BenillaLauncherAddAccount" inherits="GlueButtonSmallTemplate" text="Add Account">
+                <Size><AbsDimension x="160" y="48"/></Size>
+                <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="422" y="68"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaLauncherEditor_Open("account", BenillaLauncher.server, nil)</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaLauncherManual" inherits="GlueButtonSmallTemplate" text="Sign In Manually">
+                <Size><AbsDimension x="200" y="48"/></Size>
+                <Anchors><Anchor point="BOTTOMRIGHT"><Offset><AbsDimension x="-22" y="14"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaLauncher_ShowStock(1)</OnClick></Scripts>
+            </Button>
+            <CheckButton name="BenillaLauncherAuto">
+                <Size><AbsDimension x="40" y="40"/></Size>
+                <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="22" y="14"/></Offset></Anchor></Anchors>
+                <Layers>
+                    <Layer level="ARTWORK">
+                        <FontString inherits="GlueFontNormal" text="Sign in automatically">
+                            <Anchors><Anchor point="LEFT" relativePoint="RIGHT"><Offset><AbsDimension x="4" y="0"/></Offset></Anchor></Anchors>
+                        </FontString>
+                    </Layer>
+                </Layers>
+                <NormalTexture file="Interface\Buttons\UI-CheckBox-Up"/>
+                <PushedTexture file="Interface\Buttons\UI-CheckBox-Down"/>
+                <HighlightTexture file="Interface\Buttons\UI-CheckBox-Highlight" alphaMode="ADD"/>
+                <CheckedTexture file="Interface\Buttons\UI-CheckBox-Check"/>
+                <Scripts><OnClick>
+                    if this:GetChecked() then
+                        BenillaLauncher_SetAutoLogin(1)
+                        ConsoleExec("mobileAutoLogin 1")
+                    else
+                        BenillaLauncher_SetAutoLogin(nil)
+                        ConsoleExec("mobileAutoLogin 0")
+                    end
+                </OnClick></Scripts>
+            </CheckButton>
+        </Frames>
+        <Scripts>
+            <!-- A finger's size: the glue is drawn 768 units high, about 440 points on a phone. -->
+            <OnLoad>this:SetScale(1.25)</OnLoad>
+            <OnShow>BenillaLauncherFrame_OnShow()</OnShow>
+            <OnUpdate>BenillaLauncherFrame_OnUpdate()</OnUpdate>
+        </Scripts>
+    </Frame>
+
+    <!-- Back to the launcher from the stock boxes. -->
+    <Button name="BenillaLauncherBack" inherits="GlueButtonSmallTemplate" parent="AccountLoginUI" text="Saved Accounts" hidden="true">
+        <Size><AbsDimension x="200" y="48"/></Size>
+        <Anchors><Anchor point="TOP" relativeTo="AccountLoginLoginButton" relativePoint="BOTTOM"><Offset><AbsDimension x="0" y="-12"/></Offset></Anchor></Anchors>
+        <Scripts><OnClick>BenillaLauncher_ShowStock(nil)</OnClick></Scripts>
+    </Button>
+
+    <Frame name="BenillaLauncherEditor" parent="AccountLoginUI" frameStrata="DIALOG" enableMouse="true" hidden="true">
+        <Size><AbsDimension x="600" y="440"/></Size>
+        <!-- High, so the on-screen keyboard leaves it in view. -->
+        <Anchors><Anchor point="TOP"><Offset><AbsDimension x="0" y="-40"/></Offset></Anchor></Anchors>
+        <Backdrop bgFile="Interface\Tooltips\UI-Tooltip-Background" edgeFile="Interface\Glues\Common\Glue-Tooltip-Border" tile="true">
+            <BackgroundInsets><AbsInset left="10" right="5" top="4" bottom="9"/></BackgroundInsets>
+            <TileSize><AbsValue val="16"/></TileSize>
+            <EdgeSize><AbsValue val="16"/></EdgeSize>
+        </Backdrop>
+        <Layers>
+            <Layer level="ARTWORK">
+                <FontString name="BenillaLauncherEditorTitle" inherits="GlueFontNormalLarge">
+                    <Anchors><Anchor point="TOP"><Offset><AbsDimension x="0" y="-18"/></Offset></Anchor></Anchors>
+                </FontString>
+                <FontString name="BenillaLauncherEditorLabel1" inherits="GlueFontNormal" justifyH="LEFT">
+                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="40" y="-56"/></Offset></Anchor></Anchors>
+                </FontString>
+                <FontString name="BenillaLauncherEditorLabel2" inherits="GlueFontNormal" justifyH="LEFT">
+                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="40" y="-142"/></Offset></Anchor></Anchors>
+                </FontString>
+                <FontString name="BenillaLauncherEditorLabel3" inherits="GlueFontNormal" justifyH="LEFT">
+                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="40" y="-228"/></Offset></Anchor></Anchors>
+                </FontString>
+                <FontString name="BenillaLauncherEditorError" inherits="GlueFontRed">
+                    <Anchors><Anchor point="BOTTOM"><Offset><AbsDimension x="0" y="76"/></Offset></Anchor></Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        <Scripts><OnLoad>this:SetScale(1.25)</OnLoad></Scripts>
+        <Frames>
+            <EditBox name="BenillaLauncherEditorField1" inherits="BenillaLauncherEditBoxTemplate">
+                <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="34" y="-76"/></Offset></Anchor></Anchors>
+                <Scripts><OnTabPressed>BenillaLauncherEditorField2:SetFocus()</OnTabPressed></Scripts>
+            </EditBox>
+            <EditBox name="BenillaLauncherEditorField2" inherits="BenillaLauncherEditBoxTemplate">
+                <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="34" y="-162"/></Offset></Anchor></Anchors>
+                <Scripts><OnTabPressed>
+                    if BenillaLauncherEditorField3:IsVisible() then BenillaLauncherEditorField3:SetFocus() else BenillaLauncherEditorField1:SetFocus() end
+                </OnTabPressed></Scripts>
+            </EditBox>
+            <EditBox name="BenillaLauncherEditorField3" inherits="BenillaLauncherEditBoxTemplate">
+                <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="34" y="-248"/></Offset></Anchor></Anchors>
+                <Scripts><OnTabPressed>BenillaLauncherEditorField1:SetFocus()</OnTabPressed></Scripts>
+            </EditBox>
+            <Button name="BenillaLauncherEditorCancel" inherits="GlueButtonSmallTemplate" text="Cancel">
+                <Size><AbsDimension x="150" y="48"/></Size>
+                <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="30" y="18"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaLauncherEditor_Close()</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaLauncherEditorSave" inherits="GlueButtonSmallTemplate" text="Save">
+                <Size><AbsDimension x="150" y="48"/></Size>
+                <Anchors><Anchor point="BOTTOM"><Offset><AbsDimension x="0" y="18"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaLauncherEditor_Save(nil)</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaLauncherEditorSaveAndSignIn" inherits="GlueButtonSmallTemplate" text="Save &amp; Sign In">
+                <Size><AbsDimension x="170" y="48"/></Size>
+                <Anchors><Anchor point="BOTTOMRIGHT"><Offset><AbsDimension x="-30" y="18"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaLauncherEditor_Save(1)</OnClick></Scripts>
+            </Button>
+        </Frames>
+    </Frame>
 </Ui>

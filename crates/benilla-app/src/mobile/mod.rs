@@ -3,6 +3,8 @@
 //! options window's Mobile page, and its input is [`crate::touch`].
 
 pub(crate) mod console;
+pub(crate) mod gamepad;
+pub(crate) mod launcher;
 
 /// `assets/mobile`'s manifest for the in-game interface.
 pub(crate) const WORLD_MANIFEST: &str = "mobile.toc";
@@ -14,4 +16,22 @@ pub(crate) const GLUE_MANIFEST: &str = "glue.toc";
 pub(crate) fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| cfg!(target_os = "ios") || std::env::var_os("BENILLA_MOBILE").is_some())
+}
+
+pub(crate) struct MobilePlugin;
+
+impl bevy::app::Plugin for MobilePlugin {
+    fn build(&self, app: &mut bevy::app::App) {
+        use bevy::prelude::*;
+        if !enabled() {
+            return;
+        }
+        app.init_resource::<gamepad::PadSettings>()
+            .add_observer(gamepad::on_cvar)
+            .add_observer(launcher::on_cvar)
+            .add_systems(
+                Update,
+                launcher::remember_on_roster.after(crate::glue_session::login::LoginPolicy),
+            );
+    }
 }

@@ -2964,6 +2964,12 @@ mod tests {
                 "accountName",
                 "gxApi",
                 "gxResolution",
+                // The mobile fork's: a serialized binding table and layout, the realm override,
+                // and a view name.
+                "mobileGamepadBindings",
+                "mobileLayout",
+                "mobileRealmOverride",
+                "mobileView",
                 "realmList",
                 "realmName"
             ]
@@ -3358,6 +3364,18 @@ mod tests {
     fn every_registered_row_has_a_reader_in_the_source() {
         /// Rows whose only reader is the stock interface.
         const LUA_ONLY: &[(&str, &str)] = &[
+            (
+                "mobileView",
+                "the mobile interface's touch controls show the view it names",
+            ),
+            (
+                "mobileLayout",
+                "the mobile interface's layout editor saves and loads it",
+            ),
+            (
+                "mobileRingBar",
+                "the mobile interface's jump ring pages its slots by it",
+            ),
             (
                 "statusBarText",
                 "TextStatusBar.lua reads it on each CVAR_UPDATE",

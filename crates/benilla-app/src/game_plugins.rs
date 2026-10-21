@@ -157,6 +157,7 @@ impl PluginGroup for GamePlugins {
             .add(TextInputPlugin)
             .add(crate::touch::TouchPlugin)
             .add(crate::mobile::console::ConsolePlugin)
+            .add(crate::mobile::MobilePlugin)
             .add(UiScriptPlugin)
             // Before CvarPlugin, so the resource exists when `load_config` applies the saved value.
             .add(crate::video::VideoPlugin)
@@ -1703,6 +1704,8 @@ pub(crate) mod schedule_tests {
     /// Every one-shot VM consumer not gated on `ingame_ui_up` (read off the schedule) and not a
     /// memo-diffed `fire_event`, keyed `(path under src/, fn)`, with the reason it is safe.
     const EXEMPT: &[(&str, &str, Because, &str)] = &[
+        ("mobile/console.rs", "serve_lua", Because::Deliberate,
+         "the remote console answers each Lua request with whatever VM holds the screen, the glue's or the world's; a request in the frame before an interface exists is answered `no interface loaded`, not lost"),
         ("bindings.rs", "sync_dispatch", Because::MemoLatched,
          "`seen_generation` is a `VmMemo`: a new VM reads `None` and rebuilds, and its seed's load owes the UPDATE_BINDINGS"),
         ("capture/probe_bg.rs", "bg_probe", Because::SelfHealing,

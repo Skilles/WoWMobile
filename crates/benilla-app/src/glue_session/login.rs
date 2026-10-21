@@ -48,11 +48,6 @@ pub(super) fn build(app: &mut App) {
                 .after(benilla_world::schedule::WorldStage::Net),
         )
         .add_systems(Update, debug_login_shot.after(LoginPolicy));
-    #[cfg(target_os = "ios")]
-    app.add_systems(
-        Update,
-        super::remembered::remember_on_roster.after(LoginPolicy),
-    );
 }
 
 // ── The credential policy ────────────────────────────────────────────────────────────────────────
@@ -88,7 +83,6 @@ pub(crate) struct LoginIntent {
 
 impl LoginIntent {
     /// The session's credentials, while it holds any.
-    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
     pub(crate) fn creds(&self) -> Option<&(String, String)> {
         self.creds.as_ref()
     }
@@ -129,6 +123,7 @@ impl Attempt<'_> {
             user: user.to_string(),
             pass: pass.to_string(),
             host: self.realmlist.address().to_string(),
+            realm_override: self.realmlist.realm_override().map(str::to_string),
             locale: crate::ui_script::client_locale().tag(),
             generation: self.abandon.0.load(Ordering::SeqCst),
         });
@@ -270,14 +265,6 @@ pub(crate) fn drive_policy(
                     }
                 }
             }
-        } else {
-            // iOS: the account the last launch reached select with (`remembered`).
-            #[cfg(target_os = "ios")]
-            if let Some((user, pass)) = super::remembered::load() {
-                info!("login: signing in as the remembered account {user}");
-                attempt.intent.creds = Some((user, pass));
-                attempt.intent.retry_at = Some(now);
-            }
         }
     }
 
@@ -302,9 +289,19 @@ pub(crate) fn drive_policy(
                 // A refusal from either server: shown even on the silent path, never retried.
                 let byte = refusal.byte();
                 warn!("login: refused ({refusal:?}, {byte:#04x}) — {}", msg.reason);
-                #[cfg(target_os = "ios")]
-                if super::remembered::refuses_credentials(refusal) {
-                    super::remembered::forget();
+                // The launcher forgets a password realmd calls wrong (WOW_FAIL_UNKNOWN_ACCOUNT,
+                // which vmangos and CMaNGOS send for a bad password too, and
+                // WOW_FAIL_INCORRECT_PASSWORD).
+                if crate::mobile::enabled()
+                    && matches!(
+                        refusal,
+                        benilla_protocol::LoginRefusal::Logon(0x04 | 0x05)
+                            | benilla_protocol::LoginRefusal::LogonProof(0x04 | 0x05)
+                    )
+                {
+                    if let Some(user) = attempt.intent.account() {
+                        crate::mobile::launcher::forget_refused(attempt.realmlist.address(), user);
+                    }
                 }
                 attempt.intent.clear();
                 if may_end_the_run

@@ -8,8 +8,6 @@ pub(crate) mod queue;
 pub(crate) mod realm;
 pub(crate) mod realm_smoke;
 mod reconnect;
-#[cfg(target_os = "ios")]
-mod remembered;
 pub(crate) mod roster;
 mod roundtrip;
 

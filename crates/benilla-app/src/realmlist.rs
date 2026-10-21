@@ -17,6 +17,16 @@ pub(crate) struct RealmlistPlugin;
 
 /// `realmList`'s change callback: a value that is not an address is ignored with a warning.
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut realmlist: ResMut<Realmlist>) {
+    if ev.is(crate::mobile::launcher::CVAR_REALM_OVERRIDE) {
+        // `-` is none: the glue's `ConsoleExec` cannot write an empty value.
+        let v = ev.new.trim();
+        realmlist.realm_override = if v.is_empty() || v == "-" {
+            None
+        } else {
+            normalize(v)
+        };
+        return;
+    }
     if !ev.is(CVAR_REALMLIST) {
         return;
     }
@@ -58,6 +68,9 @@ pub(crate) struct Realmlist {
     /// The last `realmList` value that was not an address, for the stock login screen's
     /// realmlist dialog to reopen on ([`crate::ui_script::glue_mgr`]).
     refused: Option<String>,
+    /// The mobile launcher's realm address for a server behind NAT, dialed in place of the one
+    /// realmd hands out (`mobileRealmOverride`, [`crate::mobile::launcher`]).
+    realm_override: Option<String>,
 }
 
 impl Default for Realmlist {
@@ -68,11 +81,13 @@ impl Default for Realmlist {
                 address: host,
                 pinned_by_env: true,
                 refused: None,
+                realm_override: None,
             },
             _ => Realmlist {
                 address: DEFAULT_REALMLIST.to_string(),
                 pinned_by_env: false,
                 refused: None,
+                realm_override: None,
             },
         }
     }
@@ -86,11 +101,17 @@ impl Realmlist {
             address: address.to_string(),
             pinned_by_env: false,
             refused: None,
+            realm_override: None,
         }
     }
 
     pub(crate) fn address(&self) -> &str {
         &self.address
+    }
+
+    /// The realm address the next world dial uses instead of realmd's, if one is set.
+    pub(crate) fn realm_override(&self) -> Option<&str> {
+        self.realm_override.as_deref()
     }
 
     pub(crate) fn pinned_by_env(&self) -> bool {
@@ -268,6 +289,7 @@ mod tests {
             address: "harness.example.org".into(),
             pinned_by_env: true,
             refused: None,
+            realm_override: None,
         };
         r.set("somewhere.else.org");
         assert_eq!(r.address(), "harness.example.org");
@@ -280,6 +302,7 @@ mod tests {
             address: DEFAULT_REALMLIST.into(),
             pinned_by_env: false,
             refused: None,
+            realm_override: None,
         };
         r.set("logon.example.org");
         assert_eq!(r.address(), "logon.example.org");
