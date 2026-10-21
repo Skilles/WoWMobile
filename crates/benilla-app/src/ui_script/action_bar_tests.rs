@@ -172,7 +172,7 @@ fn shipped_action_bar_drives_end_to_end() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-fn load_action_bar(s: &UiScript) {
+pub(super) fn load_action_bar(s: &UiScript) {
     super::test_ui::load_ui(s, "Interface\\FrameXML\\GlobalStrings.lua");
     super::test_ui::load_ui(s, "Interface\\FrameXML\\Fonts.xml");
     super::test_ui::load_ui(s, r"Interface\FrameXML\BasicControls.xml"); // `TEXT`

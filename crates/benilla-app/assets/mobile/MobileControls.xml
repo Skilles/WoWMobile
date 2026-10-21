@@ -1,0 +1,711 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+    <!-- The mobile client's touch controls, played with the mouse the touch layer makes
+         (crates/benilla-app/src/touch): the jump ring (Jump with eight action slots around it, real
+         action buttons on the bar mobileRingBar names), the menu button (a radial menu of every
+         window, the views and the layout editor), and two buttons whose action is a choice. The
+         movement stick is the touch layer's; the editor sizes it through its CVars. Views
+         (mobileView) choose what shows; the layout editor moves, resizes, rebinds and hides each
+         element and keeps it in mobileLayout. -->
+    <Script><![CDATA[
+        -- ── Commands a button can hold, and the radial menu's entries ──
+        BENILLA_MOBILE_COMMANDS = {
+            { key = "target", label = "Target", icon = "Interface\\Icons\\Ability_Hunter_SniperShot",
+              run = function() TargetNearestEnemy() end },
+            { key = "chat", label = "Chat", icon = "Interface\\Icons\\INV_Letter_01",
+              run = function() ChatFrame_OpenChat("") end },
+            { key = "autorun", label = "Autorun", icon = "Interface\\Icons\\Ability_Rogue_Sprint",
+              run = function() ToggleAutoRun() end },
+            { key = "sit", label = "Sit", icon = "Interface\\Icons\\Spell_Nature_Sleep",
+              run = function() SitOrStand() end },
+            { key = "assist", label = "Assist", icon = "Interface\\Icons\\Ability_Warrior_BattleShout",
+              run = function() AssistUnit("target") end },
+            { key = "follow", label = "Follow", icon = "Interface\\Icons\\INV_Misc_Spyglass_02",
+              run = function() FollowUnit("target") end },
+            { key = "friend", label = "Target Friend", icon = "Interface\\Icons\\Spell_Holy_PowerInfusion",
+              run = function() TargetNearestFriend() end },
+            { key = "character", label = "Character", icon = "Interface\\Icons\\INV_Chest_Cloth_17",
+              run = function() ToggleCharacter("PaperDollFrame") end },
+            { key = "spells", label = "Spellbook", icon = "Interface\\Icons\\INV_Misc_Book_09",
+              run = function() ToggleSpellBook(BOOKTYPE_SPELL) end },
+            { key = "talents", label = "Talents", icon = "Interface\\Icons\\Ability_Marksmanship",
+              run = function() ToggleTalentFrame() end },
+            { key = "quests", label = "Quests", icon = "Interface\\Icons\\INV_Misc_Note_01",
+              run = function() ToggleQuestLog() end },
+            { key = "social", label = "Social", icon = "Interface\\Icons\\INV_Misc_Head_Human_01",
+              run = function() ToggleFriendsFrame() end },
+            { key = "map", label = "Map", icon = "Interface\\Icons\\INV_Misc_Map_01",
+              run = function() ToggleWorldMap() end },
+            { key = "bags", label = "Bags", icon = "Interface\\Icons\\INV_Misc_Bag_08",
+              run = function() OpenAllBags() end },
+            { key = "menu", label = "Game Menu", icon = "Interface\\Icons\\INV_Misc_Gear_01",
+              run = function() ToggleGameMenu() end },
+        }
+        BENILLA_MOBILE_COMMAND = {}
+        for _, c in ipairs(BENILLA_MOBILE_COMMANDS) do BENILLA_MOBILE_COMMAND[c.key] = c end
+
+        -- The radial menu: the windows first, then the rest.
+        BENILLA_MOBILE_RADIAL = { "character", "spells", "talents", "quests", "social", "map",
+            "bags", "chat", "target", "menu" }
+
+        -- ── Elements: what the editor moves. Positions are a centre as a share of the screen,
+        -- kept 60 points in from the side edges, clear of the camera housing in either landscape ──
+        BENILLA_MOBILE_ELEMENTS = {
+            { id = "ring", frame = "BenillaMobileRing", label = "Jump Ring", x = 0.87, y = 0.2, scale = 1 },
+            { id = "menu", frame = "BenillaMobileMenuButton", label = "Menu", x = 0.935, y = 0.64, scale = 1 },
+            { id = "button1", frame = "BenillaMobileButton1", label = "Button 1", x = 0.935, y = 0.52, scale = 1, action = "target" },
+            { id = "button2", frame = "BenillaMobileButton2", label = "Button 2", x = 0.935, y = 0.40, scale = 1, action = "chat" },
+            { id = "button3", frame = "BenillaMobileButton3", label = "Button 3", x = 0.065, y = 0.64, scale = 1, action = "autorun", hidden = 1 },
+        }
+
+        -- What each view shows: the jump ring's slots are their own entry.
+        BENILLA_MOBILE_VIEWS = {
+            combat = { ring = 1, slots = 1, menu = 1, button1 = 1, button2 = 1, button3 = 1 },
+            explore = { ring = 1, menu = 1, button2 = 1, button3 = 1 },
+            social = { ring = 1, menu = 1, button2 = 1 },
+            minimal = { menu = 1 },
+        }
+        BENILLA_MOBILE_VIEW_ORDER = { "combat", "explore", "social", "minimal" }
+        BENILLA_MOBILE_VIEW_LABEL = { combat = "Combat", explore = "Explore", social = "Social", minimal = "Minimal" }
+
+        BenillaMobile = { layout = {}, editing = nil, selected = nil, seen = {} }
+
+        function BenillaMobile_Element(id)
+            for _, e in ipairs(BENILLA_MOBILE_ELEMENTS) do
+                if e.id == id then return e end
+            end
+        end
+
+        -- The layout: the element's default, with what mobileLayout says on top.
+        function BenillaMobile_Get(id)
+            local e = BenillaMobile_Element(id)
+            local l = BenillaMobile.layout[id] or {}
+            local hidden = e.hidden
+            if l.hidden ~= nil then hidden = l.hidden end
+            return l.x or e.x, l.y or e.y, l.scale or e.scale, hidden, l.action or e.action
+        end
+
+        -- "id=x,y,scale,hidden,action;..."
+        function BenillaMobileLayout_Parse(text)
+            local layout = {}
+            for id, x, y, scale, hidden, action in string.gfind(text or "",
+                    "([%w]+)=([%d%.%-]+),([%d%.%-]+),([%d%.]+),([01]),([%w]*);") do
+                local h = nil
+                if hidden == "1" then h = 1 end
+                if hidden == "0" then h = 0 end
+                if action == "" then action = nil end
+                layout[id] = { x = tonumber(x), y = tonumber(y), scale = tonumber(scale), hidden = h, action = action }
+            end
+            return layout
+        end
+
+        function BenillaMobileLayout_Serialize()
+            local out = ""
+            for _, e in ipairs(BENILLA_MOBILE_ELEMENTS) do
+                local x, y, scale, hidden, action = BenillaMobile_Get(e.id)
+                local h = "0"
+                if hidden and hidden ~= 0 then h = "1" end
+                out = out .. string.format("%s=%.4f,%.4f,%.2f,%s,%s;", e.id, x, y, scale, h, action or "")
+            end
+            return out
+        end
+
+        function BenillaMobileLayout_Save()
+            SetCVar("mobileLayout", BenillaMobileLayout_Serialize())
+            BenillaMobile.seen.layout = GetCVar("mobileLayout")
+        end
+
+        function BenillaMobile_IsHidden(hidden)
+            return hidden and hidden ~= 0
+        end
+
+        -- Place, size, show and label every element for the layout and the view.
+        function BenillaMobile_Apply()
+            local on = GetCVar("mobileTouchControls") ~= "0"
+            local view = BENILLA_MOBILE_VIEWS[GetCVar("mobileView") or "combat"] or BENILLA_MOBILE_VIEWS.combat
+            local alpha = tonumber(GetCVar("mobileControlsAlpha") or "") or 0.8
+            -- GetScreenWidth: the UIParent units its children are placed in, under any UI scale.
+            local w, h = GetScreenWidth(), GetScreenHeight()
+            for _, e in ipairs(BENILLA_MOBILE_ELEMENTS) do
+                local f = getglobal(e.frame)
+                local x, y, scale, hidden, action = BenillaMobile_Get(e.id)
+                f:SetScale(scale)
+                f:ClearAllPoints()
+                f:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x * w / scale, y * h / scale)
+                if f.SetCommand then f:SetCommand(action) end
+                local shown = on and view[e.id] and not BenillaMobile_IsHidden(hidden)
+                if BenillaMobile.editing then
+                    f:Show()
+                    if BenillaMobile_IsHidden(hidden) then f:SetAlpha(0.35) else f:SetAlpha(1) end
+                elseif shown then
+                    f:SetAlpha(alpha)
+                    f:Show()
+                else
+                    f:Hide()
+                end
+            end
+            local slots = BenillaMobile.editing or view.slots
+            for k = 1, 8 do
+                local s = getglobal("BenillaMobileRingSlot" .. k)
+                if slots then s:Show() else s:Hide() end
+            end
+        end
+
+        -- The CVars the options page writes, read back each half second.
+        function BenillaMobile_Poll()
+            local changed = nil
+            -- A resize or a new UI scale moves every element's share of the screen.
+            local size = string.format("%.0fx%.0f", GetScreenWidth(), GetScreenHeight())
+            if BenillaMobile.seen.size ~= size then
+                BenillaMobile.seen.size = size
+                changed = 1
+            end
+            for _, name in ipairs({ "mobileView", "mobileTouchControls", "mobileControlsAlpha", "mobileLayout", "mobileRingBar" }) do
+                local v = GetCVar(name)
+                if BenillaMobile.seen[name] ~= v then
+                    BenillaMobile.seen[name] = v
+                    changed = 1
+                    if name == "mobileLayout" then
+                        BenillaMobile.layout = BenillaMobileLayout_Parse(v)
+                    elseif name == "mobileRingBar" then
+                        BenillaMobileRing_UpdateAll()
+                    end
+                end
+            end
+            if changed then BenillaMobile_Apply() end
+        end
+
+        function BenillaMobile_SetView(view)
+            SetCVar("mobileView", view)
+            BenillaMobile_Poll()
+        end
+
+        -- ── The jump ring ──
+        -- Slot k shows action k of the bar mobileRingBar names; on the main bar it pages and
+        -- follows the stance bar, as ActionButton1-12 and the bonus bar do.
+        function BenillaMobileRing_ActionID(k)
+            local bar = tonumber(GetCVar("mobileRingBar") or "") or 1
+            if bar == 1 then
+                if CURRENT_ACTIONBAR_PAGE == 1 then
+                    local offset = GetBonusBarOffset()
+                    if offset and offset > 0 then
+                        return k + (NUM_ACTIONBAR_PAGES + offset - 1) * NUM_ACTIONBAR_BUTTONS
+                    end
+                end
+                return k + (CURRENT_ACTIONBAR_PAGE - 1) * NUM_ACTIONBAR_BUTTONS
+            end
+            return k + (bar - 1) * NUM_ACTIONBAR_BUTTONS
+        end
+
+        local BenillaMobile_GetPagedID = ActionButton_GetPagedID
+        function ActionButton_GetPagedID(button)
+            if button.benillaSlot then return BenillaMobileRing_ActionID(button.benillaSlot) end
+            return BenillaMobile_GetPagedID(button)
+        end
+
+        function BenillaMobileRing_UpdateAll()
+            local saved = this
+            for k = 1, 8 do
+                this = getglobal("BenillaMobileRingSlot" .. k)
+                ActionButton_Update()
+            end
+            this = saved
+        end
+
+        -- Four from straight up to straight left, then four further out between them: a slot
+        -- is 49 units across at its scale, so neighbours sit 55 and 86 units apart.
+        BENILLA_MOBILE_RING_SPOTS = {
+            { 90, 105 }, { 120, 105 }, { 150, 105 }, { 180, 105 },
+            { 78, 168 }, { 106, 168 }, { 134, 168 }, { 162, 168 },
+        }
+
+        function BenillaMobileRingSlot_OnLoad()
+            local k = this:GetID()
+            this.benillaSlot = k
+            -- UPDATE_BONUS_ACTIONBAR refreshes only an isBonus button.
+            this.isBonus = 1
+            local spot = BENILLA_MOBILE_RING_SPOTS[k]
+            local a = math.rad(spot[1])
+            this:SetScale(1.35)
+            this:ClearAllPoints()
+            this:SetPoint("CENTER", "BenillaMobileRingJump", "CENTER",
+                math.cos(a) * spot[2] / 1.35, math.sin(a) * spot[2] / 1.35)
+            ActionButton_OnLoad()
+        end
+
+        -- ── Buttons that hold a command ──
+        function BenillaMobileButton_SetCommand(button, key)
+            local c = BENILLA_MOBILE_COMMAND[key or ""] or BENILLA_MOBILE_COMMAND.target
+            button.command = c.key
+            getglobal(button:GetName() .. "Icon"):SetTexture(c.icon)
+            getglobal(button:GetName() .. "Label"):SetText(c.label)
+        end
+
+        function BenillaMobileButton_OnClick()
+            if BenillaMobile.editing then
+                BenillaMobileLayout_Select(this.elementId)
+                return
+            end
+            local c = BENILLA_MOBILE_COMMAND[this.command or ""]
+            if c then c.run() end
+        end
+
+        -- ── The radial menu ──
+        function BenillaMobileRadial_Toggle()
+            if BenillaMobileRadial:IsVisible() then
+                BenillaMobileRadial:Hide()
+            else
+                BenillaMobileRadial:Show()
+            end
+        end
+
+        function BenillaMobileRadial_OnLoad()
+            local n = table.getn(BENILLA_MOBILE_RADIAL)
+            for i, key in ipairs(BENILLA_MOBILE_RADIAL) do
+                local b = getglobal("BenillaMobileRadialEntry" .. i)
+                local c = BENILLA_MOBILE_COMMAND[key]
+                local a = math.rad(90 - (i - 1) * 360 / n)
+                b:ClearAllPoints()
+                b:SetPoint("CENTER", this, "CENTER", math.cos(a) * 230, math.sin(a) * 200)
+                b.command = key
+                getglobal(b:GetName() .. "Icon"):SetTexture(c.icon)
+                getglobal(b:GetName() .. "Label"):SetText(c.label)
+            end
+        end
+
+        function BenillaMobileRadial_Run(key)
+            BenillaMobileRadial:Hide()
+            local c = BENILLA_MOBILE_COMMAND[key or ""]
+            if c then c.run() end
+        end
+
+        function BenillaMobileRadial_OnShow()
+            local current = GetCVar("mobileView") or "combat"
+            for i, v in ipairs(BENILLA_MOBILE_VIEW_ORDER) do
+                local b = getglobal("BenillaMobileRadialView" .. i)
+                b.view = v
+                b:SetText(BENILLA_MOBILE_VIEW_LABEL[v])
+                if v == current then b:LockHighlight() else b:UnlockHighlight() end
+            end
+        end
+
+        -- ── The layout editor ──
+        function BenillaMobileLayout_Toggle()
+            if BenillaMobile.editing then
+                BenillaMobileLayout_Done()
+            else
+                BenillaMobile.editing = 1
+                BenillaMobileRadial:Hide()
+                BenillaMobileLayout_Select("ring")
+                BenillaMobileEditor:Show()
+                BenillaMobile_Apply()
+            end
+        end
+
+        function BenillaMobileLayout_Done()
+            BenillaMobile.editing = nil
+            BenillaMobileEditor:Hide()
+            BenillaMobileLayout_Save()
+            BenillaMobile_Apply()
+        end
+
+        function BenillaMobileLayout_Select(id)
+            BenillaMobile.selected = id
+            local e = BenillaMobile_Element(id)
+            local _, _, scale, hidden, action = BenillaMobile_Get(id)
+            local text = e.label
+            if action then text = text .. ": " .. BENILLA_MOBILE_COMMAND[action].label end
+            BenillaMobileEditorSelected:SetText(text)
+            if BenillaMobile_IsHidden(hidden) then
+                BenillaMobileEditorHide:SetText("Show")
+            else
+                BenillaMobileEditorHide:SetText("Hide")
+            end
+            if action then BenillaMobileEditorAction:Enable() else BenillaMobileEditorAction:Disable() end
+            if id == "ring" then BenillaMobileEditorBar:Enable() else BenillaMobileEditorBar:Disable() end
+        end
+
+        function BenillaMobileLayout_Set(id, field, value)
+            local l = BenillaMobile.layout[id]
+            if not l then
+                l = {}
+                BenillaMobile.layout[id] = l
+            end
+            l[field] = value
+        end
+
+        function BenillaMobileLayout_Scale(by)
+            local id = BenillaMobile.selected
+            if not id then return end
+            local _, _, scale = BenillaMobile_Get(id)
+            scale = math.max(0.5, math.min(2.5, scale + by))
+            BenillaMobileLayout_Set(id, "scale", scale)
+            BenillaMobile_Apply()
+        end
+
+        function BenillaMobileLayout_ToggleHidden()
+            local id = BenillaMobile.selected
+            if not id then return end
+            local _, _, _, hidden = BenillaMobile_Get(id)
+            if BenillaMobile_IsHidden(hidden) then
+                BenillaMobileLayout_Set(id, "hidden", 0)
+            else
+                BenillaMobileLayout_Set(id, "hidden", 1)
+            end
+            BenillaMobileLayout_Select(id)
+            BenillaMobile_Apply()
+        end
+
+        -- The next command for a button, round the list.
+        function BenillaMobileLayout_NextAction()
+            local id = BenillaMobile.selected
+            local _, _, _, _, action = BenillaMobile_Get(id or "")
+            if not action then return end
+            local n = table.getn(BENILLA_MOBILE_COMMANDS)
+            for i, c in ipairs(BENILLA_MOBILE_COMMANDS) do
+                if c.key == action then
+                    BenillaMobileLayout_Set(id, "action", BENILLA_MOBILE_COMMANDS[math.mod(i, n) + 1].key)
+                    break
+                end
+            end
+            BenillaMobileLayout_Select(id)
+            BenillaMobile_Apply()
+        end
+
+        function BenillaMobileLayout_NextBar()
+            local bar = tonumber(GetCVar("mobileRingBar") or "") or 1
+            SetCVar("mobileRingBar", tostring(math.mod(bar, 6) + 1))
+            BenillaMobile_Poll()
+            BenillaMobileEditorBar:SetText("Bar " .. GetCVar("mobileRingBar"))
+        end
+
+        function BenillaMobileLayout_StickSize(by)
+            local v = tonumber(GetCVar("mobileStickSize") or "") or 1
+            SetCVar("mobileStickSize", string.format("%.2f", math.max(0.6, math.min(1.6, v + by))))
+        end
+
+        function BenillaMobileLayout_StickZone(by)
+            local v = tonumber(GetCVar("mobileStickZone") or "") or 0.42
+            SetCVar("mobileStickZone", string.format("%.2f", math.max(0.25, math.min(0.6, v + by))))
+        end
+
+        function BenillaMobileLayout_Reset()
+            BenillaMobile.layout = {}
+            BenillaMobileLayout_Save()
+            BenillaMobile_Apply()
+            BenillaMobileLayout_Select(BenillaMobile.selected or "ring")
+        end
+
+        -- An element under the finger in the editor moves with it.
+        function BenillaMobileElement_OnMouseDown()
+            if not BenillaMobile.editing then return end
+            BenillaMobileLayout_Select(this.elementId)
+            this:SetMovable(1)
+            this:StartMoving()
+            this.moving = 1
+        end
+
+        function BenillaMobileElement_OnMouseUp()
+            if not this.moving then return end
+            this.moving = nil
+            this:StopMovingOrSizing()
+            local x, y = this:GetCenter()
+            local scale = this:GetScale()
+            if x and y then
+                BenillaMobileLayout_Set(this.elementId, "x", x * scale / GetScreenWidth())
+                BenillaMobileLayout_Set(this.elementId, "y", y * scale / GetScreenHeight())
+            end
+            BenillaMobile_Apply()
+        end
+    ]]></Script>
+
+    <!-- A round control: an icon in a ring, a label under it. -->
+    <Button name="BenillaMobileRoundTemplate" virtual="true" frameStrata="MEDIUM">
+        <Size><AbsDimension x="58" y="58"/></Size>
+        <Layers>
+            <Layer level="BACKGROUND">
+                <Texture name="$parentIcon">
+                    <Size><AbsDimension x="42" y="42"/></Size>
+                    <Anchors><Anchor point="CENTER"/></Anchors>
+                </Texture>
+            </Layer>
+            <Layer level="ARTWORK">
+                <Texture file="Interface\Minimap\MiniMap-TrackingBorder">
+                    <Size><AbsDimension x="96" y="96"/></Size>
+                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="-3" y="3"/></Offset></Anchor></Anchors>
+                </Texture>
+            </Layer>
+            <Layer level="OVERLAY">
+                <FontString name="$parentLabel" inherits="GameFontNormalSmall">
+                    <Size><AbsDimension x="110" y="14"/></Size>
+                    <Anchors><Anchor point="TOP" relativePoint="BOTTOM"><Offset><AbsDimension x="0" y="2"/></Offset></Anchor></Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        <HighlightTexture file="Interface\Minimap\UI-Minimap-ZoomButton-Highlight" alphaMode="ADD"/>
+    </Button>
+
+    <Frame name="BenillaMobileControls" parent="UIParent">
+        <Size><AbsDimension x="1" y="1"/></Size>
+        <Anchors><Anchor point="CENTER"/></Anchors>
+        <Scripts>
+            <OnLoad>
+                this:RegisterEvent("PLAYER_ENTERING_WORLD")
+                this:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
+                this.elapsed = 0
+            </OnLoad>
+            <OnEvent>
+                if event == "UPDATE_BONUS_ACTIONBAR" then
+                    BenillaMobileRing_UpdateAll()
+                else
+                    BenillaMobile.seen = {}
+                    BenillaMobile_Poll()
+                end
+            </OnEvent>
+            <OnUpdate>
+                -- The screen every frame (a resize must not wait), the CVars twice a second.
+                local w, h = GetScreenWidth(), GetScreenHeight()
+                this.elapsed = this.elapsed + arg1
+                if this.elapsed > 0.5 or w ~= this.w or h ~= this.h then
+                    this.elapsed = 0
+                    this.w, this.h = w, h
+                    BenillaMobile_Poll()
+                end
+            </OnUpdate>
+        </Scripts>
+    </Frame>
+
+    <!-- The jump ring: Jump, and the eight slots placed round it by their OnLoad. -->
+    <Frame name="BenillaMobileRing" parent="UIParent" frameStrata="MEDIUM" enableMouse="true">
+        <Size><AbsDimension x="96" y="96"/></Size>
+        <Frames>
+            <Button name="BenillaMobileRingJump" inherits="BenillaMobileRoundTemplate">
+                <Size><AbsDimension x="84" y="84"/></Size>
+                <Anchors><Anchor point="CENTER"/></Anchors>
+                <Scripts>
+                    <OnLoad>
+                        getglobal(this:GetName() .. "Icon"):SetTexture("Interface\\Icons\\Ability_Rogue_Sprint")
+                        getglobal(this:GetName() .. "Icon"):SetWidth(62)
+                        getglobal(this:GetName() .. "Icon"):SetHeight(62)
+                        getglobal(this:GetName() .. "Label"):SetText("Jump")
+                        this:RegisterForClicks("LeftButtonDown")
+                    </OnLoad>
+                    <OnClick>
+                        if BenillaMobile.editing then
+                            BenillaMobileLayout_Select("ring")
+                        else
+                            Jump()
+                        end
+                    </OnClick>
+                    <OnMouseDown>
+                        if BenillaMobile.editing then
+                            this:GetParent().elementId = "ring"
+                            local saved = this
+                            this = this:GetParent()
+                            BenillaMobileElement_OnMouseDown()
+                            this = saved
+                        end
+                    </OnMouseDown>
+                    <OnMouseUp>
+                        local saved = this
+                        this = this:GetParent()
+                        BenillaMobileElement_OnMouseUp()
+                        this = saved
+                    </OnMouseUp>
+                </Scripts>
+            </Button>
+            <CheckButton name="BenillaMobileRingSlot1" inherits="ActionBarButtonTemplate" id="1">
+                <Scripts><OnLoad>BenillaMobileRingSlot_OnLoad()</OnLoad></Scripts>
+            </CheckButton>
+            <CheckButton name="BenillaMobileRingSlot2" inherits="ActionBarButtonTemplate" id="2">
+                <Scripts><OnLoad>BenillaMobileRingSlot_OnLoad()</OnLoad></Scripts>
+            </CheckButton>
+            <CheckButton name="BenillaMobileRingSlot3" inherits="ActionBarButtonTemplate" id="3">
+                <Scripts><OnLoad>BenillaMobileRingSlot_OnLoad()</OnLoad></Scripts>
+            </CheckButton>
+            <CheckButton name="BenillaMobileRingSlot4" inherits="ActionBarButtonTemplate" id="4">
+                <Scripts><OnLoad>BenillaMobileRingSlot_OnLoad()</OnLoad></Scripts>
+            </CheckButton>
+            <CheckButton name="BenillaMobileRingSlot5" inherits="ActionBarButtonTemplate" id="5">
+                <Scripts><OnLoad>BenillaMobileRingSlot_OnLoad()</OnLoad></Scripts>
+            </CheckButton>
+            <CheckButton name="BenillaMobileRingSlot6" inherits="ActionBarButtonTemplate" id="6">
+                <Scripts><OnLoad>BenillaMobileRingSlot_OnLoad()</OnLoad></Scripts>
+            </CheckButton>
+            <CheckButton name="BenillaMobileRingSlot7" inherits="ActionBarButtonTemplate" id="7">
+                <Scripts><OnLoad>BenillaMobileRingSlot_OnLoad()</OnLoad></Scripts>
+            </CheckButton>
+            <CheckButton name="BenillaMobileRingSlot8" inherits="ActionBarButtonTemplate" id="8">
+                <Scripts><OnLoad>BenillaMobileRingSlot_OnLoad()</OnLoad></Scripts>
+            </CheckButton>
+        </Frames>
+    </Frame>
+
+    <Button name="BenillaMobileMenuButton" inherits="BenillaMobileRoundTemplate" parent="UIParent">
+        <Scripts>
+            <OnLoad>
+                this.elementId = "menu"
+                getglobal(this:GetName() .. "Icon"):SetTexture("Interface\\Icons\\INV_Misc_Gear_01")
+                getglobal(this:GetName() .. "Label"):SetText("Menu")
+            </OnLoad>
+            <OnClick>
+                if BenillaMobile.editing then
+                    BenillaMobileLayout_Select("menu")
+                else
+                    BenillaMobileRadial_Toggle()
+                end
+            </OnClick>
+            <OnMouseDown>BenillaMobileElement_OnMouseDown()</OnMouseDown>
+            <OnMouseUp>BenillaMobileElement_OnMouseUp()</OnMouseUp>
+        </Scripts>
+    </Button>
+
+    <Button name="BenillaMobileButtonTemplate" inherits="BenillaMobileRoundTemplate" virtual="true">
+        <Scripts>
+            <OnLoad>
+                this.elementId = "button" .. this:GetID()
+                this.SetCommand = BenillaMobileButton_SetCommand
+            </OnLoad>
+            <OnClick>BenillaMobileButton_OnClick()</OnClick>
+            <OnMouseDown>BenillaMobileElement_OnMouseDown()</OnMouseDown>
+            <OnMouseUp>BenillaMobileElement_OnMouseUp()</OnMouseUp>
+        </Scripts>
+    </Button>
+    <Button name="BenillaMobileButton1" inherits="BenillaMobileButtonTemplate" parent="UIParent" id="1"/>
+    <Button name="BenillaMobileButton2" inherits="BenillaMobileButtonTemplate" parent="UIParent" id="2"/>
+    <Button name="BenillaMobileButton3" inherits="BenillaMobileButtonTemplate" parent="UIParent" id="3"/>
+
+    <!-- The radial menu: every window round the centre, the views across it. -->
+    <Button name="BenillaMobileRadialEntryTemplate" inherits="BenillaMobileRoundTemplate" virtual="true" frameStrata="DIALOG">
+        <Scripts><OnClick>BenillaMobileRadial_Run(this.command)</OnClick></Scripts>
+    </Button>
+    <Button name="BenillaMobileRadialViewTemplate" inherits="UIPanelButtonTemplate" virtual="true" frameStrata="DIALOG">
+        <Size><AbsDimension x="100" y="34"/></Size>
+        <Scripts><OnClick>
+            BenillaMobile_SetView(this.view)
+            BenillaMobileRadial_OnShow()
+        </OnClick></Scripts>
+    </Button>
+    <Button name="BenillaMobileRadial" parent="UIParent" frameStrata="DIALOG" setAllPoints="true" hidden="true">
+        <Layers>
+            <Layer level="BACKGROUND">
+                <Texture setAllPoints="true">
+                    <Color r="0" g="0" b="0" a="0.55"/>
+                </Texture>
+            </Layer>
+            <Layer level="ARTWORK">
+                <FontString inherits="GameFontNormalLarge" text="View">
+                    <Anchors><Anchor point="CENTER"><Offset><AbsDimension x="0" y="56"/></Offset></Anchor></Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        <Frames>
+            <Button name="BenillaMobileRadialEntry1" inherits="BenillaMobileRadialEntryTemplate"/>
+            <Button name="BenillaMobileRadialEntry2" inherits="BenillaMobileRadialEntryTemplate"/>
+            <Button name="BenillaMobileRadialEntry3" inherits="BenillaMobileRadialEntryTemplate"/>
+            <Button name="BenillaMobileRadialEntry4" inherits="BenillaMobileRadialEntryTemplate"/>
+            <Button name="BenillaMobileRadialEntry5" inherits="BenillaMobileRadialEntryTemplate"/>
+            <Button name="BenillaMobileRadialEntry6" inherits="BenillaMobileRadialEntryTemplate"/>
+            <Button name="BenillaMobileRadialEntry7" inherits="BenillaMobileRadialEntryTemplate"/>
+            <Button name="BenillaMobileRadialEntry8" inherits="BenillaMobileRadialEntryTemplate"/>
+            <Button name="BenillaMobileRadialEntry9" inherits="BenillaMobileRadialEntryTemplate"/>
+            <Button name="BenillaMobileRadialEntry10" inherits="BenillaMobileRadialEntryTemplate"/>
+            <Button name="BenillaMobileRadialView1" inherits="BenillaMobileRadialViewTemplate">
+                <Anchors><Anchor point="RIGHT" relativePoint="CENTER"><Offset><AbsDimension x="-56" y="20"/></Offset></Anchor></Anchors>
+            </Button>
+            <Button name="BenillaMobileRadialView2" inherits="BenillaMobileRadialViewTemplate">
+                <Anchors><Anchor point="RIGHT" relativePoint="CENTER"><Offset><AbsDimension x="48" y="20"/></Offset></Anchor></Anchors>
+            </Button>
+            <Button name="BenillaMobileRadialView3" inherits="BenillaMobileRadialViewTemplate">
+                <Anchors><Anchor point="LEFT" relativePoint="CENTER"><Offset><AbsDimension x="-48" y="-20"/></Offset></Anchor></Anchors>
+            </Button>
+            <Button name="BenillaMobileRadialView4" inherits="BenillaMobileRadialViewTemplate">
+                <Anchors><Anchor point="LEFT" relativePoint="CENTER"><Offset><AbsDimension x="56" y="-20"/></Offset></Anchor></Anchors>
+            </Button>
+            <Button name="BenillaMobileRadialEdit" inherits="UIPanelButtonTemplate" text="Edit Layout">
+                <Size><AbsDimension x="140" y="34"/></Size>
+                <Anchors><Anchor point="CENTER"><Offset><AbsDimension x="0" y="-70"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaMobileLayout_Toggle()</OnClick></Scripts>
+            </Button>
+        </Frames>
+        <Scripts>
+            <OnLoad>BenillaMobileRadial_OnLoad()</OnLoad>
+            <OnShow>BenillaMobileRadial_OnShow()</OnShow>
+            <!-- A tap anywhere but an entry closes it. -->
+            <OnClick>this:Hide()</OnClick>
+        </Scripts>
+    </Button>
+
+    <!-- The layout editor's bar, across the top. -->
+    <Frame name="BenillaMobileEditor" parent="UIParent" frameStrata="DIALOG" enableMouse="true" hidden="true">
+        <Size><AbsDimension x="900" y="96"/></Size>
+        <Anchors><Anchor point="TOP"><Offset><AbsDimension x="0" y="-8"/></Offset></Anchor></Anchors>
+        <Backdrop bgFile="Interface\DialogFrame\UI-DialogBox-Background" edgeFile="Interface\Tooltips\UI-Tooltip-Border" tile="true">
+            <BackgroundInsets><AbsInset left="4" right="4" top="4" bottom="4"/></BackgroundInsets>
+            <TileSize><AbsValue val="16"/></TileSize>
+            <EdgeSize><AbsValue val="16"/></EdgeSize>
+        </Backdrop>
+        <Layers>
+            <Layer level="ARTWORK">
+                <FontString inherits="GameFontNormal" justifyH="LEFT"
+                    text="Edit Layout: drag a control to move it, tap it to choose it. Drag a spell onto a ring slot to change it.">
+                    <Size><AbsDimension x="860" y="16"/></Size>
+                    <Anchors><Anchor point="TOPLEFT"><Offset><AbsDimension x="16" y="-12"/></Offset></Anchor></Anchors>
+                </FontString>
+                <FontString name="BenillaMobileEditorSelected" inherits="GameFontHighlight" justifyH="LEFT">
+                    <Size><AbsDimension x="200" y="16"/></Size>
+                    <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="16" y="22"/></Offset></Anchor></Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        <Frames>
+            <Button name="BenillaMobileEditorSmaller" inherits="UIPanelButtonTemplate" text="Smaller">
+                <Size><AbsDimension x="80" y="32"/></Size>
+                <Anchors><Anchor point="BOTTOMLEFT"><Offset><AbsDimension x="220" y="12"/></Offset></Anchor></Anchors>
+                <Scripts><OnClick>BenillaMobileLayout_Scale(-0.1)</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaMobileEditorLarger" inherits="UIPanelButtonTemplate" text="Larger">
+                <Size><AbsDimension x="80" y="32"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaMobileEditorSmaller" relativePoint="RIGHT"/></Anchors>
+                <Scripts><OnClick>BenillaMobileLayout_Scale(0.1)</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaMobileEditorHide" inherits="UIPanelButtonTemplate" text="Hide">
+                <Size><AbsDimension x="70" y="32"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaMobileEditorLarger" relativePoint="RIGHT"/></Anchors>
+                <Scripts><OnClick>BenillaMobileLayout_ToggleHidden()</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaMobileEditorAction" inherits="UIPanelButtonTemplate" text="Action">
+                <Size><AbsDimension x="80" y="32"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaMobileEditorHide" relativePoint="RIGHT"/></Anchors>
+                <Scripts><OnClick>BenillaMobileLayout_NextAction()</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaMobileEditorBar" inherits="UIPanelButtonTemplate" text="Bar">
+                <Size><AbsDimension x="70" y="32"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaMobileEditorAction" relativePoint="RIGHT"/></Anchors>
+                <Scripts>
+                    <OnShow>this:SetText("Bar " .. (GetCVar("mobileRingBar") or "1"))</OnShow>
+                    <OnClick>BenillaMobileLayout_NextBar()</OnClick>
+                </Scripts>
+            </Button>
+            <Button name="BenillaMobileEditorStickSmaller" inherits="UIPanelButtonTemplate" text="Stick -">
+                <Size><AbsDimension x="70" y="32"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaMobileEditorBar" relativePoint="RIGHT"/></Anchors>
+                <Scripts><OnClick>BenillaMobileLayout_StickSize(-0.1)</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaMobileEditorStickLarger" inherits="UIPanelButtonTemplate" text="Stick +">
+                <Size><AbsDimension x="70" y="32"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaMobileEditorStickSmaller" relativePoint="RIGHT"/></Anchors>
+                <Scripts><OnClick>BenillaMobileLayout_StickSize(0.1)</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaMobileEditorReset" inherits="UIPanelButtonTemplate" text="Reset">
+                <Size><AbsDimension x="70" y="32"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaMobileEditorStickLarger" relativePoint="RIGHT"/></Anchors>
+                <Scripts><OnClick>BenillaMobileLayout_Reset()</OnClick></Scripts>
+            </Button>
+            <Button name="BenillaMobileEditorDone" inherits="UIPanelButtonTemplate" text="Done">
+                <Size><AbsDimension x="70" y="32"/></Size>
+                <Anchors><Anchor point="LEFT" relativeTo="BenillaMobileEditorReset" relativePoint="RIGHT"/></Anchors>
+                <Scripts><OnClick>BenillaMobileLayout_Done()</OnClick></Scripts>
+            </Button>
+        </Frames>
+    </Frame>
+</Ui>

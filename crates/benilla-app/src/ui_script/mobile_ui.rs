@@ -33,6 +33,146 @@ mod tests {
         s
     }
 
+    /// The stock action bar with the touch controls over it.
+    fn controls() -> UiScript {
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(1365.0, 768.0);
+        super::super::action_bar_tests::load_action_bar(&s);
+        super::super::test_ui::load_ui_strict(&s, "MobileControls.xml");
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+        let _ = &mut s;
+        s
+    }
+
+    /// A share of the screen holds under the UI scale: `GetScreenWidth` is the UIParent units
+    /// children are placed in.
+    #[test]
+    fn an_element_sits_at_its_share_of_the_screen_under_the_ui_scale() {
+        benilla_formats::wow_data_or_skip!();
+        let s = controls();
+        s.run("UIParent:SetScale(0.9); BenillaMobile.seen = {}; BenillaMobile_Poll()")
+            .unwrap();
+        let share: f64 = s
+            .eval("local x = BenillaMobileMenuButton:GetCenter(); return x / GetScreenWidth()")
+            .unwrap();
+        benilla_ui::assert_near!(share, 0.935, "the menu button's share of the width");
+    }
+
+    #[test]
+    fn the_ring_slots_show_the_chosen_bar() {
+        benilla_formats::wow_data_or_skip!();
+        let s = controls();
+        let id = |k: u32| -> i64 {
+            s.eval(&format!(
+                "return ActionButton_GetPagedID(BenillaMobileRingSlot{k})"
+            ))
+            .unwrap()
+        };
+        // The main bar pages.
+        assert_eq!(id(1), 1);
+        s.run("CURRENT_ACTIONBAR_PAGE = 2").unwrap();
+        assert_eq!(id(1), 13);
+        s.run("CURRENT_ACTIONBAR_PAGE = 1").unwrap();
+        // The right bar, 25-36.
+        s.run(r#"SetCVar("mobileRingBar", "3")"#).unwrap();
+        assert_eq!(id(1), 25);
+        assert_eq!(id(8), 32);
+        // The stock bar's own buttons still page as before.
+        assert_eq!(
+            s.eval::<i64>("return ActionButton_GetPagedID(ActionButton1)")
+                .unwrap(),
+            1
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    }
+
+    #[test]
+    fn a_view_shows_its_controls() {
+        benilla_formats::wow_data_or_skip!();
+        let s = controls();
+        s.run("BenillaMobile_Poll()").unwrap();
+        let shown = |f: &str| -> bool { s.eval(&format!("return {f}:IsShown() == 1")).unwrap() };
+        assert!(shown("BenillaMobileRing") && shown("BenillaMobileRingSlot1"));
+        assert!(shown("BenillaMobileMenuButton") && shown("BenillaMobileButton1"));
+        // Button 3 is hidden by its default layout.
+        assert!(!shown("BenillaMobileButton3"));
+        s.run(r#"BenillaMobile_SetView("explore")"#).unwrap();
+        assert!(shown("BenillaMobileRing") && !shown("BenillaMobileRingSlot1"));
+        assert!(!shown("BenillaMobileButton1") && shown("BenillaMobileButton2"));
+        s.run(r#"BenillaMobile_SetView("minimal")"#).unwrap();
+        assert!(!shown("BenillaMobileRing") && shown("BenillaMobileMenuButton"));
+        s.run(r#"SetCVar("mobileTouchControls", "0"); BenillaMobile_Poll()"#)
+            .unwrap();
+        assert!(!shown("BenillaMobileMenuButton"));
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    }
+
+    #[test]
+    fn the_layout_round_trips_through_its_cvar() {
+        benilla_formats::wow_data_or_skip!();
+        let s = controls();
+        s.run(
+            r#"BenillaMobileLayout_Set("menu", "x", 0.5)
+               BenillaMobileLayout_Set("button1", "action", "map")
+               BenillaMobileLayout_Set("button3", "hidden", 0)
+               BenillaMobileLayout_Save()
+               BenillaMobile.layout = {}
+               BenillaMobile.layout = BenillaMobileLayout_Parse(GetCVar("mobileLayout"))"#,
+        )
+        .unwrap();
+        let (x, action, hidden): (f64, String, Option<i64>) = s
+            .eval(
+                r#"local x = BenillaMobile_Get("menu")
+                   local _, _, _, _, a = BenillaMobile_Get("button1")
+                   local _, _, _, h = BenillaMobile_Get("button3")
+                   return x, a, h"#,
+            )
+            .unwrap();
+        benilla_ui::assert_near!(x, 0.5, "the menu's x");
+        assert_eq!(action, "map");
+        assert_eq!(hidden, Some(0));
+        s.run("BenillaMobile_Poll()").unwrap();
+        assert_eq!(
+            s.eval::<String>("return BenillaMobileButton1Label:GetText()")
+                .unwrap(),
+            "Map"
+        );
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    }
+
+    #[test]
+    fn the_radial_menu_runs_its_entry_and_opens_the_editor() {
+        benilla_formats::wow_data_or_skip!();
+        let s = controls();
+        s.run("BENILLA_TEST_MAP = nil; ToggleWorldMap = function() BENILLA_TEST_MAP = 1 end")
+            .unwrap();
+        s.run("BenillaMobileRadial_Toggle()").unwrap();
+        assert!(s
+            .eval::<bool>("return BenillaMobileRadial:IsShown() == 1")
+            .unwrap());
+        let map: i64 = s
+            .eval(
+                r#"for i = 1, 10 do
+                       local b = getglobal("BenillaMobileRadialEntry" .. i)
+                       if b.command == "map" then BenillaMobileRadial_Run(b.command) end
+                   end
+                   return BENILLA_TEST_MAP"#,
+            )
+            .unwrap();
+        assert_eq!(map, 1);
+        assert!(!s
+            .eval::<bool>("return BenillaMobileRadial:IsShown() == 1")
+            .unwrap());
+        s.run("BenillaMobileLayout_Toggle()").unwrap();
+        assert!(s
+            .eval::<bool>(
+                "return BenillaMobileEditor:IsShown() == 1 and BenillaMobileButton3:IsShown() == 1"
+            )
+            .unwrap());
+        s.run("BenillaMobileLayout_Done()").unwrap();
+        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    }
+
     #[test]
     fn the_mobile_page_opens_and_binds_its_cvars() {
         benilla_formats::wow_data_or_skip!();
