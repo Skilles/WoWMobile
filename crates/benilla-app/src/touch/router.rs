@@ -138,7 +138,8 @@ enum Role {
     Pinch {
         last: Vec2,
     },
-    Button(usize),
+    /// On-screen button `.0`, pressed in update `.1`.
+    Button(usize, u64),
     /// Out of a pinch; ignored until it lifts.
     Spent,
 }
@@ -152,6 +153,8 @@ pub(crate) struct Router {
     /// Output held back a frame, so a press and its release never land in one frame.
     deferred: Vec<Output>,
     keys: MoveKeys,
+    /// Updates so far: a button lifted in the update it went down in releases a frame later.
+    frame: u64,
 }
 
 impl Router {
@@ -177,6 +180,7 @@ impl Router {
     /// One frame: `touches` in arrival order, `now` in seconds.
     pub(crate) fn update(&mut self, touches: &[Touch], now: f32, ctx: &Context) -> Vec<Output> {
         let mut out = std::mem::take(&mut self.deferred);
+        self.frame += 1;
 
         // Last frame's fresh touches now have the UI's answer for where they landed.
         for id in std::mem::take(&mut self.fresh) {
@@ -259,7 +263,7 @@ impl Router {
     fn start(&mut self, t: &Touch, now: f32, ctx: &Context, out: &mut Vec<Output>) {
         if ctx.in_world {
             if let Some(i) = ctx.buttons.iter().position(|r| r.contains(t.pos)) {
-                self.roles.insert(t.id, Role::Button(i));
+                self.roles.insert(t.id, Role::Button(i, self.frame));
                 out.push(Output::ButtonKey(i, true));
                 return;
             }
@@ -398,7 +402,7 @@ impl Router {
                 }
                 self.roles.insert(t.id, Role::Pinch { last: t.pos });
             }
-            Role::Button(_) | Role::Spent => {}
+            Role::Button(..) | Role::Spent => {}
         }
     }
 
@@ -434,7 +438,10 @@ impl Router {
                     }
                 }
             }
-            Some(Role::Button(i)) => out.push(Output::ButtonKey(i, false)),
+            Some(Role::Button(i, frame)) if frame == self.frame => {
+                self.deferred.push(Output::ButtonKey(i, false));
+            }
+            Some(Role::Button(i, _)) => out.push(Output::ButtonKey(i, false)),
             _ => {}
         }
     }
@@ -637,6 +644,24 @@ mod tests {
             r.update(&[t(1, Phase::End, 875.0, 325.0)], 1.1, &c),
             vec![Output::ButtonKey(0, false)]
         );
+    }
+
+    #[test]
+    fn a_button_tapped_within_one_frame_releases_the_next() {
+        let mut r = Router::default();
+        let c = ctx(false);
+        assert_eq!(
+            r.update(
+                &[
+                    t(1, Phase::Start, 875.0, 325.0),
+                    t(1, Phase::End, 875.0, 325.0)
+                ],
+                0.0,
+                &c
+            ),
+            vec![Output::ButtonKey(0, true)]
+        );
+        assert_eq!(r.update(&[], 0.02, &c), vec![Output::ButtonKey(0, false)]);
     }
 
     #[test]

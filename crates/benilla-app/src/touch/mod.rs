@@ -165,6 +165,9 @@ fn route_touches(
     };
     let now = time.elapsed_secs();
     for output in state.router.update(&batch, now, &ctx) {
+        if !matches!(output, Output::Cursor(_) | Output::Look(_)) {
+            debug!("touch: {output:?}");
+        }
         match output {
             Output::Cursor(p) => {
                 window.set_cursor_position(Some(p));
@@ -216,6 +219,9 @@ fn route_touches(
         if held != was {
             keyboard.write(key_message(key, held, window_entity));
         }
+    }
+    if keys != state.keys {
+        debug!("touch: movement keys {keys:?}");
     }
     state.keys = keys;
 }

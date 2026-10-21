@@ -58,6 +58,9 @@ if [[ -n "${WOW_HOST:-}" ]]; then
     export SIMCTL_CHILD_WOW_HOST="$WOW_HOST"
 fi
 export SIMCTL_CHILD_RUST_BACKTRACE=1
+if [[ -n "${RUST_LOG:-}" ]]; then
+    export SIMCTL_CHILD_RUST_LOG="$RUST_LOG"
+fi
 if [[ -n "${WOW_TOUCH_ALWAYS:-}" ]]; then
     export SIMCTL_CHILD_WOW_TOUCH_ALWAYS=1
 fi
