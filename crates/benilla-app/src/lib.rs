@@ -113,6 +113,7 @@ mod target;
 pub(crate) mod test_support;
 mod text_filter;
 mod textinput;
+mod touch;
 mod transport;
 mod tutorial;
 mod ui_action;
