@@ -460,6 +460,10 @@ pub(crate) fn will_launch(mtm: MainThreadMarker, queued_handler: EventLoopHandle
 }
 
 pub fn did_finish_launching(mtm: MainThreadMarker) {
+    // benilla: a game is played without touching the screen for minutes at a time (auto-run, a
+    // flight); keep iOS from dimming and locking it while the app is in front.
+    unsafe { UIApplication::sharedApplication(mtm).setIdleTimerDisabled(true) };
+
     let mut this = AppState::get_mut(mtm);
     let windows = match this.state_mut() {
         AppStateImpl::Launching { queued_windows, .. } => mem::take(queued_windows),

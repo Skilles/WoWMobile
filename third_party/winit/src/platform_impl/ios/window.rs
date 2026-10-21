@@ -261,12 +261,14 @@ impl Inner {
         debug!("`Window::set_cursor` ignored on iOS")
     }
 
+    // benilla: there is no pointer to move or grab; an app that drives its own cursor from touches
+    // (benilla's `touch` module) asks for both, and an error each time is only log noise.
     pub fn set_cursor_position(&self, _position: Position) -> Result<(), ExternalError> {
-        Err(ExternalError::NotSupported(NotSupportedError::new()))
+        Ok(())
     }
 
     pub fn set_cursor_grab(&self, _: CursorGrabMode) -> Result<(), ExternalError> {
-        Err(ExternalError::NotSupported(NotSupportedError::new()))
+        Ok(())
     }
 
     pub fn set_cursor_visible(&self, _visible: bool) {

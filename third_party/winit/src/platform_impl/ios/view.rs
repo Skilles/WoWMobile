@@ -535,16 +535,6 @@ impl WinitView {
                     phase,
                 }),
             }));
-            touch_events.extend(
-                super::touch_mouse::emulate(touch_id, phase, physical_location)
-                    .into_iter()
-                    .map(|event| {
-                        EventWrapper::StaticEvent(Event::WindowEvent {
-                            window_id: RootWindowId(window.id()),
-                            event,
-                        })
-                    }),
-            );
         }
         let mtm = MainThreadMarker::new().unwrap();
         app_state::handle_nonuser_events(mtm, touch_events);
@@ -558,7 +548,22 @@ impl WinitView {
         app_state::handle_nonuser_events(
             mtm,
             text.to_string().chars().flat_map(|c| {
-                let text = smol_str::SmolStr::from_iter([c]);
+                // benilla: the keyboard's Return arrives as "\n"; send it as the Enter key, as a
+                // hardware keyboard does, so an app's Enter handling sees it.
+                let enter = c == '\n' || c == '\r';
+                let text = if enter {
+                    smol_str::SmolStr::new_static("\r")
+                } else {
+                    smol_str::SmolStr::from_iter([c])
+                };
+                let (logical_key, physical_key) = if enter {
+                    (Key::Named(NamedKey::Enter), PhysicalKey::Code(KeyCode::Enter))
+                } else {
+                    (
+                        Key::Character(text.clone()),
+                        PhysicalKey::Unidentified(NativeKeyCode::Unidentified),
+                    )
+                };
                 // Emit both press and release events
                 [ElementState::Pressed, ElementState::Released].map(|state| {
                     EventWrapper::StaticEvent(Event::WindowEvent {
@@ -573,10 +578,8 @@ impl WinitView {
                                 state,
                                 location: KeyLocation::Standard,
                                 repeat: false,
-                                logical_key: Key::Character(text.clone()),
-                                physical_key: PhysicalKey::Unidentified(
-                                    NativeKeyCode::Unidentified,
-                                ),
+                                logical_key: logical_key.clone(),
+                                physical_key,
                                 platform_specific: KeyEventExtra {},
                             },
                             is_synthetic: false,

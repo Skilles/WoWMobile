@@ -21,9 +21,6 @@ its `UIWindow` with `initWithFrame:`, which under a scene manifest is never atta
 - `window.rs`: `WinitUIWindow::new` uses `initWithWindowScene:` when a scene has connected.
 
 Without a scene manifest the iOS backend behaves as upstream. Every change is marked `benilla:`.
-- `src/platform_impl/ios/touch_mouse.rs` (new), called from `view.rs`'s `handle_touches`: the first
-  finger down also sends `CursorMoved` and left `MouseInput`, so a mouse-driven app works by touch.
-  `WINIT_IOS_TOUCH_AS_MOUSE=0` turns it off.
 - `src/platform_impl/ios/keyboard.rs` (new): `set_ime_cursor_area` (ignored upstream) is honoured
   by sliding the `UIWindow` up while the on-screen keyboard would cover the area, from
   `UIKeyboardWillChangeFrameNotification` / `UIKeyboardWillHideNotification` observed in
@@ -31,3 +28,9 @@ Without a scene manifest the iOS backend behaves as upstream. Every change is ma
 - `event_loop.rs` / `app_state.rs`: `ActiveEventLoop::exit` (ignored upstream, per Apple's QA1561)
   runs the terminate path (`Destroyed`, `LoopExiting`) at the next loop turn and then ends the
   process, so a game's own Quit works.
+- `window.rs`: `set_cursor_position` and `set_cursor_grab` succeed as no-ops instead of
+  `NotSupported`; the app's own touch layer drives its cursor.
+- `view.rs`: the on-screen keyboard's Return (`insertText:` with "\n") is sent as the Enter key
+  (`NamedKey::Enter`, `KeyCode::Enter`), not as a "\n" character.
+- `app_state.rs`: `did_finish_launching` disables the idle timer, so the screen does not dim and
+  lock during play.
