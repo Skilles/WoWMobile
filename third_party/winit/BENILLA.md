@@ -34,3 +34,5 @@ Without a scene manifest the iOS backend behaves as upstream. Every change is ma
   (`NamedKey::Enter`, `KeyCode::Enter`), not as a "\n" character.
 - `app_state.rs`: `did_finish_launching` disables the idle timer, so the screen does not dim and
   lock during play.
+- `window.rs`: a window made on a scene skips `setScreen:` for borderless fullscreen (a UIKit error
+  under the scene lifecycle; the scene sets the screen).

@@ -100,7 +100,11 @@ impl WinitUIWindow {
                 screen.setCurrentMode(Some(video_mode.screen_mode(mtm)));
                 this.setScreen(screen);
             },
-            Some(Fullscreen::Borderless(Some(ref monitor))) => {
+            // benilla: a window on a scene takes the scene's screen; `setScreen:` there is a UIKit
+            // error under the scene lifecycle.
+            Some(Fullscreen::Borderless(Some(ref monitor)))
+                if super::scene::window_scene(mtm).is_none() =>
+            {
                 let screen = monitor.ui_screen(mtm);
                 this.setScreen(screen);
             },
