@@ -45,6 +45,8 @@ libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # Thread-to-ECS channels: crossbeam's `Receiver` is `Sync`, so it is a resource without a mutex.
 crossbeam-channel = "0.5"
+# The mobile remote console's replies (`mobile::console`).
+serde_json = "1"
 benilla-assets = { path = "../benilla-assets", default-features = false }
 benilla-formats = { path = "../benilla-formats", default-features = false }
 benilla-protocol = { path = "../benilla-protocol" }

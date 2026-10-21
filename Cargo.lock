@@ -537,6 +537,7 @@ dependencies = [
  "rtrb",
  "security-framework",
  "serde",
+ "serde_json",
  "sha1",
  "smithay-clipboard",
  "symphonia",

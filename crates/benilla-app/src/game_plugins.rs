@@ -156,6 +156,7 @@ impl PluginGroup for GamePlugins {
             .add(PortraitPlugin)
             .add(TextInputPlugin)
             .add(crate::touch::TouchPlugin)
+            .add(crate::mobile::console::ConsolePlugin)
             .add(UiScriptPlugin)
             // Before CvarPlugin, so the resource exists when `load_config` applies the saved value.
             .add(crate::video::VideoPlugin)

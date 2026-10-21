@@ -2,6 +2,8 @@
 //! (loaded by `ui_script::mobile_ui` after benilla's layer), its settings are `mobile*` CVars on the
 //! options window's Mobile page, and its input is [`crate::touch`].
 
+pub(crate) mod console;
+
 /// `assets/mobile`'s manifest for the in-game interface.
 pub(crate) const WORLD_MANIFEST: &str = "mobile.toc";
 /// `assets/mobile`'s manifest for the glue screens.
