@@ -283,6 +283,13 @@ impl FieldChanged {
     pub fn unit_field(&self, index: u16) -> bool {
         self.is_unit() && self.index == index
     }
+    /// A unit's alive-to-dead edge, signed as the health watcher compares it (`0x6046f0`:
+    /// `0x604774 jg` on the old health, `0x604778 jle` on the new), which runs `OnDied`.
+    pub fn unit_died(&self) -> bool {
+        self.unit_field(benilla_protocol::field::FIELD_UNIT_HEALTH)
+            && self.old as i32 > 0
+            && self.new as i32 <= 0
+    }
     /// The edge's slot in a unit-block array of `len` dwords at `base` (`UNIT_FIELD_AURA[48]`).
     pub fn unit_array_slot(&self, base: u16, len: u16) -> Option<u16> {
         (self.is_unit() && (base..base + len).contains(&self.index)).then(|| self.index - base)
@@ -564,6 +571,11 @@ impl Objects<'_, '_> {
     /// Our own player, once in the world.
     pub fn player(&self) -> Option<Entity> {
         self.me.single().ok()
+    }
+
+    /// Our own player's descriptor fields, once in the world.
+    pub(crate) fn player_fields(&self) -> Option<&ObjectFields> {
+        self.stores.get(self.player()?).ok().map(|s| &s.0)
     }
 
     /// An item object's countdown cells.
@@ -1102,6 +1114,14 @@ pub(crate) enum ClientCommand {
         pet_guid: u64,
         packed: u32,
         target_guid: u64,
+    },
+    /// `CMSG_PET_CAST_SPELL`: a cast the ladder sent with the pet or a possessed unit as its
+    /// caster (`SendCast 0x6e54f0`, `0x6e5816`), the bar's client-targeted and possessed presses
+    /// (`0x4bd385`). A refusal comes back as `SMSG_PET_CAST_FAILED`.
+    PetCastSpell {
+        caster_guid: u64,
+        spell_id: u32,
+        target: benilla_protocol::messages::UseItemTarget,
     },
     /// `CMSG_PET_SET_ACTION`: one or two `(position, word)` pairs. The bar's autocast toggle is
     /// one entry with bit 30 flipped.
@@ -1871,6 +1891,9 @@ pub(crate) enum ClientCommand {
         icon: u8,
         guid: u64,
     },
+    /// `MSG_RAID_TARGET_UPDATE` with the byte 0xff alone, the request for every icon, which a raid
+    /// list sends on finding no roster held (`0x4babf4`-`0x4bac33`).
+    RequestRaidTargets,
     /// `MSG_MINIMAP_PING`, raw world `(x, y)`. The server relays it to the rest of the group and
     /// ignores it solo, so our own marker is drawn locally.
     MinimapPing {

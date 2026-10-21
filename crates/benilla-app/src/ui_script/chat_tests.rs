@@ -8,6 +8,8 @@ use super::test_ui::load_ui as load_xml;
 /// The chat stack, fonts first so `inherits="ChatFontNormal"` resolves.
 pub(crate) fn chat_frame() -> UiScript {
     let mut s = UiScript::new().unwrap();
+    // No engine behind it: the calls its verbs make are kept for the `take_*` readers.
+    s.keep_calls();
     load_xml(&s, "Interface\\FrameXML\\GlobalStrings.lua");
     load_xml(&s, "Interface\\FrameXML\\Fonts.xml");
     load_xml(&s, "Interface\\FrameXML\\BasicControls.xml");
@@ -389,6 +391,7 @@ fn chat_click_dismisses_a_stuck_spell_but_not_an_item() {
             use_fork: Default::default(),
             item_class: None,
             duration_ms: None,
+            field_duration: 0,
             petition: None,
             already_bound: false,
             occupied_seats: None,
@@ -1424,6 +1427,8 @@ fn the_docked_tabs_follow_the_dock_through_a_session() {
 fn the_recruitment_join_reaches_the_chat_frame_before_the_verb_returns() {
     benilla_formats::wow_data_or_skip!();
     let mut s = chat_frame();
+    // No engine: the join's call is kept, its window entry made in the verb.
+    s.keep_calls();
     s.set_guild_recruitment_plan(benilla_ui::script::RecruitmentPlan::Join {
         name: "GuildRecruitment - City".into(),
         shortcut: "GuildRecruitment".into(),

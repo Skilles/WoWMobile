@@ -5,10 +5,11 @@
 //! order: the cooldown pair (`0x4b31b0`) on a cooldown change; `ACTIONBAR_UPDATE_USABLE` when a
 //! refresh of the usable cache (`0x4e5c00`) finds a pair changed, each reactive spell's
 //! `SPELL_ACTIVE` ([`super::reactive`]) and `SPELL_UPDATE_USABLE` from the usable refresh
-//! `0x4b31c0`'s callers; `BAG_UPDATE_COOLDOWN` (`0x4f93d0`) from the item legs; then combat enter
-//! and leave (`0x6256ff`, `0x625778`) and autorepeat start and stop (`0x6e5952`, `0x6ea170`).
+//! `0x4b31c0`'s callers; `BAG_UPDATE_COOLDOWN` (`0x4f93d0`) from the item legs. Combat enter and
+//! leave are signalled in their attack packets (`crate::creature_anim`).
 //! `IsCurrentAction` reads the cast state live, and its pair (`0x4b3250`) is signalled where the
-//! cast changes ([`crate::ui_cast`]).
+//! cast changes, as are autorepeat start and stop where the key is stored and cleared
+//! (`0x6e5952`, `0x6ea170`; [`crate::ui_cast`]).
 //! Usability is `IsSpellUsableNow 0x6e3d60` ([`crate::spell::usable`]), auto-repeat the `0xceac30`
 //! key, and range the pre-check `0x6e4440` on the selection ([`crate::spell::range_check`]).
 
@@ -22,7 +23,6 @@ use benilla_formats::RangeTargets;
 use benilla_protocol::messages::{ACTION_KIND_ITEM, ACTION_KIND_SPELL};
 use benilla_ui::script::{macro_slot_id, ActionState};
 
-use crate::creature_anim::Engaged;
 use crate::item_watch::ItemNotice;
 use crate::items::Items;
 use crate::net::{FieldChanged, NetCommands, ObjectStore, SelfPlayer};
@@ -31,7 +31,6 @@ use crate::spell::Cooldowns;
 use super::{PlayerActions, Spells};
 use crate::query_cache::Ask;
 use crate::spell::usable;
-use crate::spell::AutoRepeatActive;
 
 /// The feed's memory: what was last pushed, and the edge detectors.
 #[derive(Default)]
@@ -47,8 +46,6 @@ pub(super) struct StateMemory {
     /// The VM's macro edits and the bag feed's `BAG_UPDATE`s as last read.
     macro_edits: u64,
     bag_updates: u64,
-    engaged: bool,
-    auto_repeat: Option<u32>,
     last_cd_trace: Option<Instant>,
 }
 
@@ -268,22 +265,17 @@ pub(crate) struct ActionEvents {
     activated: Vec<String>,
     /// `BAG_UPDATE_COOLDOWN`.
     bags: bool,
-    /// `PLAYER_ENTER_COMBAT` (true) or `PLAYER_LEAVE_COMBAT`.
-    combat: Option<bool>,
-    /// `START_AUTOREPEAT_SPELL` (true) or `STOP_AUTOREPEAT_SPELL`.
-    auto_repeat: Option<bool>,
 }
 
 /// Computes and diff-pushes every occupied slot's state, and owes the reference's events to
 /// [`fire_action_events`].
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 pub(super) fn feed_action_state(
-    // The cooldowns, the auto-repeat key, the selection with the relations and positions
+    // The cooldowns, the selection with the relations and positions
     // `IsActionInRange`'s pre-check reads, and the pet's bar (the gate and the history a macro
     // bound to a pet spell reads), which the call host also reaches.
     mut vm: crate::script_calls::VmWith<(
         ResMut<'static, Cooldowns>,
-        Res<'static, AutoRepeatActive>,
         crate::spell::cast_target::CastTargeting<'static, 'static>,
         Option<Res<'static, crate::ui_pet::PetBar>>,
     )>,
@@ -305,7 +297,7 @@ pub(super) fn feed_action_state(
         // The active player's creation, whose arrival (`0x5dea86`) empties the reactive list.
         Query<(), Added<SelfPlayer>>,
     ),
-    self_q: Query<(&ObjectStore, &Transform, Has<Engaged>), With<SelfPlayer>>,
+    self_q: Query<(&ObjectStore, &Transform), With<SelfPlayer>>,
     // One param for the guid index and the item store, for the same ceiling.
     objects: crate::net::Objects,
     units: Query<(&ObjectStore, &Transform), Without<SelfPlayer>>,
@@ -329,7 +321,7 @@ pub(super) fn feed_action_state(
     // The reactive list, which lives from one arrival to the next, not for a VM.
     mut reactive: Local<super::reactive::ReactiveList>,
 ) {
-    vm.turn(|script, (mut cooldowns, auto_repeat, targeting, pet_bar)| {
+    vm.turn(|script, (mut cooldowns, targeting, pet_bar)| {
         let Some(script) = script else {
             return;
         };
@@ -365,9 +357,8 @@ pub(super) fn feed_action_state(
         let control_lost = own_control.as_ref().is_some_and(|c| c.0);
         // The bags, walked once per frame for every reagent and totem count below.
         let stacks = me
-            .map(|(s, _, _)| stack_counts(&s.0, &objects))
+            .map(|(s, _)| stack_counts(&s.0, &objects))
             .unwrap_or_default();
-        let engaged = me.is_some_and(|(_, _, e)| e);
         let caster = range_units.caster();
         let selection = &targeting.selection;
         let target = selection
@@ -379,12 +370,8 @@ pub(super) fn feed_action_state(
         // slots read the history of, and the pet's object when the gate holds.
         let pet_leg = pet_bar.as_deref().map(|bar| {
             let pet = objects.store(bar.spells.pet_guid);
-            let held = crate::ui_pet::pet_actions_usable(
-                bar,
-                cast_ctx.self_guid,
-                me.map(|(s, _, _)| s),
-                pet,
-            );
+            let held =
+                crate::ui_pet::pet_actions_usable(bar, cast_ctx.self_guid, me.map(|(s, _)| s), pet);
             (bar, pet.filter(|_| held))
         });
 
@@ -451,7 +438,7 @@ pub(super) fn feed_action_state(
                         st = pet_book_state(PetBookLeg {
                             d,
                             spell,
-                            player: me.map(|(s, _, _)| s),
+                            player: me.map(|(s, _)| s),
                             pet,
                             skill_lines: skill_catalog,
                             mods: spell_mods,
@@ -490,7 +477,7 @@ pub(super) fn feed_action_state(
                     st.form = d.shapeshift_form;
                     st.profession = profession(button.action, d, skill_lines.as_deref());
                     // The usable walk (`0x6e3d60`); only its power gate sets `notEnoughMana`.
-                    if let (Some((store, _, _)), Some(sp)) = (me, spells.as_deref()) {
+                    if let (Some((store, _)), Some(sp)) = (me, spells.as_deref()) {
                         let ctx = usable::UsableCtx {
                             store,
                             target: selection.guid.zip(target.map(|(s, _)| s)),
@@ -562,7 +549,7 @@ pub(super) fn feed_action_state(
                     // `IsEquippedAction`, the green border: `0x622270` at mask 1
                     // (`0x4e5377`-`0x4e5380`), the walker over the worn slots, so a broken copy is
                     // not worn.
-                    st.equipped = me.is_some_and(|(s, _, _)| {
+                    st.equipped = me.is_some_and(|(s, _)| {
                         crate::ui_items::find_item(
                             &s.0,
                             &objects,
@@ -577,7 +564,7 @@ pub(super) fn feed_action_state(
                     // `0x4e5050`'s item arm runs the count, `IsItemOnCooldown` and the on-use spell
                     // through the same `0x6e3d60` walk. With no player the reference answers (0, 0)
                     // (`0x4e5080`), the default state.
-                    if let Some((store, _, _)) = me {
+                    if let Some((store, _)) = me {
                         let ctx = usable::UsableCtx {
                             store,
                             target: selection.guid.zip(target.map(|(s, _)| s)),
@@ -675,7 +662,7 @@ pub(super) fn feed_action_state(
             }
         }
         let activated = match (me, spells.as_deref()) {
-            (Some((store, _, _)), Some(sp)) if refresh => {
+            (Some((store, _)), Some(sp)) if refresh => {
                 let ctx = usable::UsableCtx {
                     store,
                     target: selection.guid.zip(target.map(|(s, _)| s)),
@@ -701,14 +688,6 @@ pub(super) fn feed_action_state(
         owed.refresh |= refresh;
         owed.activated.extend(activated);
         owed.bags |= bags;
-        if engaged != memory.engaged {
-            memory.engaged = engaged;
-            owed.combat = Some(engaged);
-        }
-        if auto_repeat.0 != memory.auto_repeat {
-            memory.auto_repeat = auto_repeat.0;
-            owed.auto_repeat = Some(auto_repeat.0.is_some());
-        }
     })
 }
 
@@ -745,26 +724,6 @@ pub(super) fn fire_action_events(
         }
         if owed.bags {
             script.fire_event("BAG_UPDATE_COOLDOWN", vec![]);
-        }
-        if let Some(engaged) = owed.combat {
-            script.fire_event(
-                if engaged {
-                    "PLAYER_ENTER_COMBAT"
-                } else {
-                    "PLAYER_LEAVE_COMBAT"
-                },
-                vec![],
-            );
-        }
-        if let Some(on) = owed.auto_repeat {
-            script.fire_event(
-                if on {
-                    "START_AUTOREPEAT_SPELL"
-                } else {
-                    "STOP_AUTOREPEAT_SPELL"
-                },
-                vec![],
-            );
         }
     })
 }

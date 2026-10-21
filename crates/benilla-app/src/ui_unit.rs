@@ -24,6 +24,9 @@ pub(crate) mod field_events;
 mod held;
 mod relations;
 pub(crate) mod tooltip_facts;
+pub(crate) mod wire_order;
+
+pub(crate) use held::{traits_from_name_cache, unit_reach};
 
 /// The unit-feed pass, gated so none of its login one-shots or per-VM memos runs before the in-game
 /// interface exists; the demo override orders itself after it.
@@ -40,6 +43,11 @@ pub(crate) struct WorldEnterSeats;
 /// feed's `RAID_TARGET_UPDATE`, whose TargetFrame handler asks `GetRaidTargetIndex("target")`.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UnitSnapshots;
+
+/// [`fire_unit_events`]' signals, `PLAYER_TARGET_CHANGED` and `PLAYER_COMBO_POINTS`: a feed whose
+/// state their handlers read runs `.before(UnitEvents)`.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct UnitEvents;
 
 /// One `UNIT_COMBAT` over a unit, the portrait hit indicator's feed. The emitter `0x494600` fires
 /// `(token, action, descriptor, amount, type)` once per token naming the unit, with no
@@ -111,6 +119,13 @@ pub(crate) struct UiUnitPlugin;
 impl Plugin for UiUnitPlugin {
     fn build(&self, app: &mut App) {
         field_events::add_notice_drop(app);
+        // The handler table's marks, which put the field notices and the chat queue in their
+        // packets' order.
+        crate::net::handlers::NetHandlerApp::net_drain_marks(
+            app,
+            wire_order::begin_drain,
+            wire_order::mark_call,
+        );
         app.configure_sets(
             Update,
             UnitFeed
@@ -149,11 +164,15 @@ impl Plugin for UiUnitPlugin {
                 feed_player_control
                     .after(crate::player::ControlRestore)
                     .before(crate::ui_action::CooldownEvents),
-                // After the action feed, whose usable refresh precedes these events.
-                fire_unit_events.after(crate::ui_action::CooldownEvents),
-                // After the aura feed, whose resolver inputs it measures.
+                // After the aura feed, whose resolver inputs it measures, and ahead of the unit
+                // events, whose `PLAYER_TARGET_CHANGED` handlers ask the new target's range
+                // (`CanInspect`, `0x48a1b0`).
                 feed_unit_reach.after(crate::ui_aura::AuraEvents),
-                // After the same feed, whose guids it covers.
+                // After the action feed, whose usable refresh precedes these events.
+                fire_unit_events
+                    .in_set(UnitEvents)
+                    .after(crate::ui_action::CooldownEvents),
+                // After the aura feed, whose guids it covers.
                 held::feed_chain_units.after(crate::ui_aura::AuraEvents),
                 // After every snapshot above is pushed, so a handler reads the new reaction.
                 fire_faction_on_forced_table.after(crate::ui_aura::AuraEvents),
@@ -719,55 +738,55 @@ impl UnitTokens<'_, '_> {
         Some((*self.index.as_ref()?.0.get(&guid)?, guid))
     }
 
-    /// Resolve `token` as `0x515970` does: its base, then a hop for each `target` after it. The
-    /// text is read by [`parse_unit_token`], which the VM's resolver shares, so both take the same
-    /// tokens; a token that names nobody, or a base or hop the object manager does not hold, is
-    /// `None`.
-    pub(crate) fn resolve(&self, token: &str, selection: &Selection) -> Option<(Entity, u64)> {
+    /// `0x515970` on `token`: the guid its base names, then each `target` hop off the unit it has
+    /// reached. The text is read by [`parse_unit_token`], which the VM's resolver shares, so both
+    /// take the same tokens. A base needs no object, as a slot's guid (`0x4e81a0`) or the target's
+    /// (`[0xb4e2d8]`) names a party member out of range, save `mouseover`, which names a held unit
+    /// alone (`0x515bd9`); a hop reads the held unit's `UNIT_FIELD_TARGET` (`0x515a0f`-`0x515a25`),
+    /// so a hop off a unit the object manager does not hold is nobody (`0x515a16`). `None` is
+    /// nobody.
+    pub(crate) fn guid(&self, token: &str, selection: &Selection) -> Option<u64> {
         let UnitTokenParse::Unit { base, hops } = parse_unit_token(token) else {
             return None;
         };
-        let mut unit = self.base(base, selection)?;
+        let mut guid = self.base(base, selection).filter(|&g| g != 0)?;
         for _ in 0..hops {
-            unit = self.target_of(unit.0)?;
+            let (entity, _) = self.held(guid)?;
+            let store = self.stores.get(entity).ok().filter(|s| s.is_unit())?;
+            guid = store.0.unit_target().filter(|&g| g != 0)?;
         }
-        Some(unit)
+        Some(guid)
     }
 
-    /// The held unit a token's base names, before any `target` hop.
-    fn base(&self, base: UnitBase, selection: &Selection) -> Option<(Entity, u64)> {
+    /// `GetUnitFromToken 0x515940`: the object of the guid `token` names ([`Self::guid`]), held.
+    pub(crate) fn resolve(&self, token: &str, selection: &Selection) -> Option<(Entity, u64)> {
+        self.held(self.guid(token, selection)?)
+    }
+
+    /// The guid a token's base names, before any `target` hop.
+    fn base(&self, base: UnitBase, selection: &Selection) -> Option<u64> {
         match base {
-            UnitBase::Player => self.me(),
-            UnitBase::Target => selection.target.zip(selection.guid),
+            UnitBase::Player => self.me().map(|(_, guid)| guid),
+            UnitBase::Target => selection.guid,
             // The same pick `ui_tooltip` pushes `"mouseover"` from.
             UnitBase::Mouseover => self
                 .hovered
                 .as_ref()?
-                .mouseover(&self.hovered_go.as_deref().copied().unwrap_or_default()),
+                .mouseover(&self.hovered_go.as_deref().copied().unwrap_or_default())
+                .map(|(_, guid)| guid),
             // Off the pet bar's cached guid, as the `"pet"` snapshot reads it.
-            UnitBase::Pet => {
-                let guid = self.pet.as_ref()?.spells.pet_guid;
-                (guid != 0).then(|| self.held(guid)).flatten()
-            }
+            UnitBase::Pet => Some(self.pet.as_ref()?.spells.pet_guid),
             UnitBase::PartyPet(row) => self
                 .party_member(row)
                 .and_then(|member| self.pet_of(member, false)),
             UnitBase::RaidPet(row) => self
                 .raid_member(row)
                 .and_then(|member| self.pet_of(member, true)),
-            UnitBase::Raid(row) => self.raid_member(row).and_then(|guid| self.held(guid)),
-            UnitBase::Party(row) => self.party_member(row).and_then(|guid| self.held(guid)),
+            UnitBase::Raid(row) => self.raid_member(row),
+            UnitBase::Party(row) => self.party_member(row),
             // The interaction NPC's guid, `[0xb4e2d0]` (`0x515c00`).
-            UnitBase::Npc => self.held(self.interact.as_ref()?.1?),
+            UnitBase::Npc => self.interact.as_ref()?.1,
         }
-    }
-
-    /// One `target` hop (`0x515a0f`-`0x515a25`): the held unit's `UNIT_FIELD_TARGET`, held in turn.
-    /// The lookup takes the unit typemask, so a hop off any other object, or off a unit with no
-    /// target, is nobody.
-    fn target_of(&self, unit: Entity) -> Option<(Entity, u64)> {
-        let store = self.stores.get(unit).ok().filter(|s| s.is_unit())?;
-        self.held(store.0.unit_target()?)
     }
 
     /// The guid in 0-based party slot `row`, the one `partyN` and `partypetN` share.
@@ -782,20 +801,18 @@ impl UnitTokens<'_, '_> {
         crate::ui_party::raid_row_guid(&self.group, index)
     }
 
-    /// A group member's pet, held: `CHARM`, else `SUMMON`, off the member's descriptor while it is
-    /// held, else off the roster record's pet guid (`partypetN` `0x4e81d0`, `raidpetN` `0x491960`).
-    /// A pet the object manager does not hold names no unit here, as any unheld unit.
-    fn pet_of(&self, member: u64, raid: bool) -> Option<(Entity, u64)> {
+    /// A group member's pet: `CHARM`, else `SUMMON`, off the member's descriptor while it is held,
+    /// else off the roster record's pet guid (`partypetN` `0x4e81d0`, `raidpetN` `0x491960`).
+    fn pet_of(&self, member: u64, raid: bool) -> Option<u64> {
         let live = self
             .held(member)
             .and_then(|(entity, _)| self.stores.get(entity).ok())
             .map(|store| &store.0);
-        let pet = if raid {
+        if raid {
             self.group.raid_pet_guid(member, live)
         } else {
             self.group.party_pet_guid(member, live)
-        };
-        self.held(pet?)
+        }
     }
 }
 
@@ -888,12 +905,8 @@ fn feed_farsight_focus(
     })
 }
 
-/// Feed the unit reach map: per held unit a token can name, its squared distance and whether it
-/// passes `0x4944a0`'s other legs, the one `CanInspect` answers by (`0x48a2a1`): a player unit
-/// (`0x4944d8`) that is the active player (`0x4944dd`) or one it can cooperate with (`0x4944e4`).
-/// Cooperation is the faction group, not attackability: an unflagged enemy-faction player is not
-/// inspectable, a same-faction duel opponent is. The guids are the resolver's own inputs, which
-/// the aura feed pushes each frame
+/// Feed the unit reach map: per held unit a token can name, its [`held::unit_reach`]. The guids
+/// are the resolver's own inputs, which the aura feed pushes each frame
 /// ([`UiScript::held_unit_guids`], so this runs after it): the bases and each unit a `target`
 /// chain reaches, and the VM resolves a verb's token to one of them or to a guid with no entry. Ungated: distances move every
 /// frame, and no event keys off the map.
@@ -908,7 +921,6 @@ fn feed_unit_reach(
             return;
         };
         let mut reach = HashMap::new();
-        let (rel, me) = (world.get(), world.me());
         if let Some((self_tf, _)) = self_q.iter().next() {
             for guid in script.held_unit_guids() {
                 let Some((entity, _)) = tokens.held(guid) else {
@@ -917,20 +929,10 @@ fn feed_unit_reach(
                 let Ok(tf) = transforms.get(entity) else {
                     continue;
                 };
-                let unit = tokens
-                    .stores
-                    .get(entity)
-                    .ok()
-                    .map(|s| world.unit_of(guid, s));
-                let inspectable = unit.zip(me.as_ref()).is_some_and(|(unit, me)| {
-                    unit.is_player && (unit.guid == me.guid || rel.can_cooperate(me, &unit))
-                });
+                let store = tokens.stores.get(entity).ok();
                 reach.insert(
                     guid,
-                    benilla_ui::script::UnitReach {
-                        dist_sq: dist_sq(tf.translation, self_tf.translation),
-                        inspectable,
-                    },
+                    held::unit_reach(&world, guid, store, tf.translation, self_tf.translation),
                 );
             }
         }
@@ -1122,6 +1124,10 @@ pub(crate) fn snapshot(
         guild_id: store.0.player_guild_id(),
         // `PLAYER_BYTES_3` byte 1; a creature has no PLAYER block and reads 0.
         drunk: store.0.player_drunk_byte().unwrap_or(0),
+        // What the stat getters read of any unit but the active player (`0x515940`, then the
+        // object's fields), and the SUMMONEDBY their summon gate compares (`0x519272`).
+        combat: crate::ui_char::unit_combat_stats(store),
+        summoned_by: store.0.unit_summoned_by().unwrap_or(0),
         tooltip: benilla_ui::script::UnitTooltipFacts {
             // The builder's raw read (`0x52a89f`), not `UnitHealth`'s feign-death zero. The facts
             // that read beyond the descriptor are [`tooltip_facts`]'.
@@ -1406,7 +1412,11 @@ fn feed_units(
     // `ResMut` because the guild-identity cache is lazy: a miss sends `CMSG_GUILD_QUERY`.
     mut guild: ResMut<crate::ui_guild::GuildState>,
     interact: Option<Res<crate::ui_session::InteractNpc>>,
+    // Our player's create since this feed last ran: an arrival (`0x5dea50`), which a `/reload`'s
+    // cascade lacks. The feed runs only with an interface up, so an arrival before one waits.
+    arrivals: Query<(), Added<SelfPlayer>>,
 ) {
+    let arrived = !arrivals.is_empty();
     let p = hosted.p0();
     let selection_changed = p.is_changed();
     let selection = *p;
@@ -1512,18 +1522,16 @@ fn feed_units(
                 object: &object,
                 study: tables.study(),
             },
+            guild: &guild,
         };
-        let target = selection.target.zip(selection.guid).and_then(|(e, guid)| {
-            let store = stores.all.get(e).ok()?;
-            let mut s = held.state(store, guid);
-            s.guild = crate::ui_guild::unit_guild(&store.0, &mut guild, &commands);
-            Some(s)
-        });
+        let target = selection
+            .target
+            .zip(selection.guid)
+            .and_then(|(e, guid)| Some(held.state(stores.all.get(e).ok()?, guid)));
 
         // `"targettarget"`: one hop off the target's `UNIT_FIELD_TARGET`, streamed guids only, for
         // the stock frame's poll (`TargetofTarget_OnUpdate`, `TargetFrame.lua:494-538`): no unit
-        // event carries the hop, whose token is none of `0x515c50`'s. No guild leg: nothing asks it
-        // for one, and a lazy-cache miss sends a query.
+        // event carries the hop, whose token is none of `0x515c50`'s.
         let tot = selection
             .target
             .and_then(|e| stores.all.get(e).ok())
@@ -1551,20 +1559,21 @@ fn feed_units(
             gate.audit("feed_units", "the target snapshot");
             script.set_unit("target", target.clone());
         }
-        // Absence is data here too: the target dropping its target clears the token.
-        let tot_dirty = match (&tot, memo.last.get("targettarget")) {
-            (Some(cur), Some(prev)) => cur != prev,
-            (None, None) => false,
-            _ => true,
-        };
+        // Absence is data here too: the target dropping its target clears the token. A seat
+        // replaced it past the memo, as it did `"target"`.
+        let tot_dirty = target_view_moved
+            || match (&tot, memo.last.get("targettarget")) {
+                (Some(cur), Some(prev)) => cur != prev,
+                (None, None) => false,
+                _ => true,
+            };
         if tot_dirty {
             gate.audit("feed_units", "the target-of-target snapshot");
             script.set_unit("targettarget", tot.clone());
         }
 
         // `"npc"`: the interaction NPC, the reference's `[0xb4e2d0]` that
-        // `CGGameUI::SetInteractNPC` (`0x4930d0`) writes, which `InteractNpc` models. No guild leg,
-        // as for `"targettarget"`.
+        // `CGGameUI::SetInteractNPC` (`0x4930d0`) writes, which `InteractNpc` models.
         let npc = interact
             .as_deref()
             .and_then(|i| Some((i.0?, i.1?)))
@@ -1669,7 +1678,7 @@ fn feed_units(
         // in the world both times. `PLAYER_LOGIN` only when this VM's load armed it, so a
         // worldport's re-entry fires `PLAYER_ENTERING_WORLD` alone. At world exit, re-arm the entry
         // and forget the player-global memos so the next character seeds them.
-        if let Some((_, me)) = self_pair {
+        if let Some((store, me)) = self_pair {
             if !memo.entered_world {
                 gate.audit("feed_units", "the world-enter events");
                 // `"player"` names us when the cascade runs, from our own create: the stock windows
@@ -1677,6 +1686,12 @@ fn feed_units(
                 // ahead of the aura feed's full resolver push, which this feed is not ordered
                 // against.
                 script.seat_player_guid(me.0);
+                // The arrival's ghost state (`0x5deb2a` → `0x5de9c0`) runs ahead of its cascade
+                // (`0x5deb60`): alive, `PLAYER_UNGHOST` (`0x5dea2a`), with no gate before it; a
+                // ghost's leg is its tutorial (`crate::tutorial`).
+                if arrived && store.0.player_flags() & 0x10 == 0 {
+                    script.fire_event("PLAYER_UNGHOST", vec![]);
+                }
                 script.fire_world_enter();
                 memo.entered_world = true;
             }
@@ -1864,6 +1879,7 @@ mod tests {
         app.init_resource::<crate::ui_party::GroupState>()
             .init_resource::<HoveredObject>();
         let wolf = app.world_mut().spawn_empty().id();
+        app.insert_resource(crate::net::GuidIndex([(WOLF, wolf)].into_iter().collect()));
         app.insert_resource(Hovered {
             target: Some(wolf),
             guid: Some(WOLF),
@@ -2589,7 +2605,6 @@ mod tests {
             ("party1targettargettarget", 4, false),
             ("party2target", 4, false),
             ("party1foo", 4, false),
-            ("npctarget", 4, false),
         ] {
             assert_eq!(
                 answers(
@@ -2600,6 +2615,16 @@ mod tests {
                 "CheckInteractDistance({token}, {kind})"
             );
         }
+        // A token the resolver does not know raises (`0x515c14`): `npc` is one exact compare with
+        // no chain, so it knows no `npctarget`; a bad suffix after a known prefix is GUID 0.
+        let call = r#"CheckInteractDistance("npctarget", 4)"#;
+        assert!(
+            app.world()
+                .non_send_resource::<UiScript>()
+                .run(call)
+                .is_err(),
+            "{call}"
+        );
         // `CanInspect`: a player within 10 yards, so `B` and not the mob 20 yards off.
         for (token, want) in [
             ("party1targettarget", true),
@@ -2771,6 +2796,7 @@ mod tests {
             benilla_formats::load_languages(&mut chain).expect("Languages.dbc"),
         ));
         let mut script = UiScript::new().expect("VM");
+        script.keep_calls();
         // `SendChatMessage` needs a local player (`0x49f223`).
         script.set_unit(
             "player",
@@ -3674,11 +3700,13 @@ mod tests {
         );
     }
 
-    /// A selection call shows its pick as `"target"` to the rest of its chunk (`TargetByName`,
-    /// `0x489d60`); when the commit does not follow (here the call is dropped), the next frame
-    /// re-pushes `"target"` from the committed selection, though nothing the feed diffs moved.
+    /// The host seats each selection a call commits as `"target"` for the rest of its chunk
+    /// ([`UiScript::seat_selection`]), from its by-name candidate's snapshot, and its
+    /// `"targettarget"`; the next frame re-pushes both from the committed selection, though
+    /// nothing the feed diffs moved, as when a chunk selects a unit and goes back to the one it
+    /// started on.
     #[test]
-    fn a_target_view_the_commit_did_not_follow_is_re_pushed_the_next_frame() {
+    fn a_seated_target_view_is_re_pushed_from_the_selection_the_next_frame() {
         use crate::names::CreatureRecord;
         use benilla_protocol::messages::ObjectType;
         use benilla_protocol::ObjectFields;
@@ -3699,10 +3727,7 @@ mod tests {
             .init_resource::<crate::ui_guild::GuildState>();
         let (tx, _rx) = crossbeam_channel::unbounded();
         app.insert_resource(NetCommands(tx));
-        // No engine behind it: the VM keeps its calls, and none is applied.
-        let mut script = UiScript::new().unwrap();
-        script.keep_calls();
-        app.insert_non_send_resource(script);
+        app.insert_non_send_resource(UiScript::new().unwrap());
         let mut names = NameCache::default();
         names.insert_creature(
             69,
@@ -3761,25 +3786,37 @@ mod tests {
                     name: Some("Druid".into()),
                     ..Default::default()
                 },
-                selectable: true,
                 assistable_alive: true,
             }),
         );
+        // The druid targets the player, so the seat shows a target of target too.
+        script.seat_selection(Some(benilla_ui::script::SeatedSelection {
+            guid: DRUID,
+            held: true,
+            target: 0x77,
+            target_held: true,
+        }));
+        let tot_exists = |app: &mut App| {
+            app.world_mut()
+                .non_send_resource_mut::<UiScript>()
+                .eval::<bool>("return UnitExists('targettarget') == 1")
+                .unwrap()
+        };
         assert_eq!(
-            target_name(&mut app, "TargetByName('Druid')").as_deref(),
+            target_name(&mut app, "").as_deref(),
             Some("Druid"),
-            "the chunk reads its pick"
+            "the chunk reads the seat"
         );
-        let dropped = app
-            .world_mut()
-            .non_send_resource_mut::<UiScript>()
-            .take_script_calls();
-        assert_eq!(dropped.len(), 1, "the call, never applied");
+        assert!(tot_exists(&mut app), "and the seat's target of target");
         app.update();
         assert_eq!(
             target_name(&mut app, "").as_deref(),
             Some("Wolf"),
             "the committed selection is shown again"
+        );
+        assert!(
+            !tot_exists(&mut app),
+            "the wolf targets nobody, so its target of target is nobody"
         );
     }
 

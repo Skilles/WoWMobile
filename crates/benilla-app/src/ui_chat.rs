@@ -31,9 +31,6 @@ mod frames;
 /// The idle handler: the 5-minute auto-sit and auto-AFK, and the 30-minute camp.
 pub(crate) mod idle;
 mod input;
-/// The `SendChatMessage` drain, for the tests that feed it a real group.
-#[cfg(test)]
-pub(crate) use input::drain_addon_chat_sends;
 /// The language gate: the exemptions and fluency lookup behind the chat garble.
 mod language;
 /// `LoggingChat`/`LoggingCombat`: the two log files `/chatlog` and `/combatlog` toggle.
@@ -46,6 +43,8 @@ mod notice_tests;
 mod recruitment;
 /// The chat windows' saved look: tab tint, alpha and font size, read at login, saved at logout.
 pub(crate) mod settings;
+#[cfg(test)]
+mod slot_tests;
 #[cfg(test)]
 mod tests;
 
@@ -61,6 +60,11 @@ pub(crate) use edit::ChannelState;
 pub(crate) use event::event_name;
 pub(crate) use event::{default_color, ChatEvent, ChatEventKind};
 pub(crate) use feed::ChatLog;
+/// The chat applier off a bare world, for the tests that send through it.
+#[cfg(test)]
+pub(crate) use input::{chat_world, run_chat};
+/// The host's chat appliers ([`crate::script_calls::ScriptCallHost`]).
+pub(crate) use input::{ChatSender, EmoteDoer};
 
 /// The chat feed once, for a test over the whole client: the `CHAT_MSG_*` fan-out of what the
 /// log holds, with the call host the world lends.
@@ -70,6 +74,15 @@ pub(crate) fn feed_chat_once(world: &mut World) {
     world
         .run_system_once(feed::feed_chat)
         .expect("the chat feeds");
+}
+/// The submitted-line drain once, for a test over the whole client: the dev and probe lines the
+/// VM holds, with the call host the world lends.
+#[cfg(test)]
+pub(crate) fn drain_chat_input_once(world: &mut World) {
+    use bevy::ecs::system::RunSystemOnce;
+    world
+        .run_system_once(input::drain_chat_input)
+        .expect("the chat input drains");
 }
 /// Test-only: the quest log's rig tees the lines its timers show.
 #[cfg(test)]
@@ -185,10 +198,6 @@ impl Plugin for UiChatPlugin {
                     // settled before the idle timer reads it.
                     idle::idle_handler,
                     input::drain_chat_input.in_set(ChatDrain),
-                    // After the box's drain, so a `SendChatMessage` or `SendAddonMessage` from a
-                    // slash handler it just ran goes out this frame.
-                    input::drain_addon_chat_sends,
-                    input::drain_addon_message_sends,
                 )
                     .chain()
                     .in_set(crate::ui_script::UiDrain)

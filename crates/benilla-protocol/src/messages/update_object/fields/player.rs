@@ -13,6 +13,11 @@ impl ObjectFields {
     pub fn item_owner(&self) -> Option<u64> {
         self.get_guid(6)
     }
+    /// `ITEM_FIELD_CONTAINED` (field 8): the bag holding the item, or its owner for an item in
+    /// one of the player's own seats.
+    pub fn item_contained(&self) -> Option<u64> {
+        self.get_guid(8)
+    }
     /// `OBJECT_FIELD_TYPE` itself, the type mask: 9 for a creature or a pet, `0x19` for a player.
     /// The display resolve asks the creature cache only for 9 (`0x60b134`).
     pub fn object_type_mask(&self) -> Option<u32> {
@@ -32,6 +37,12 @@ impl ObjectFields {
         (i < 5)
             .then(|| self.get_u32(FIELD_ITEM_SPELL_CHARGES + u16::from(i)))?
             .map(|v| v as i32)
+    }
+    /// `ITEM_FIELD_DURATION` (field 15, the client's `[item+0x114]+0x24`): a timed item's
+    /// lifetime as the object carries it, 0 for none. The countdown a tooltip shows comes from
+    /// `SMSG_ITEM_TIME_UPDATE` instead.
+    pub fn item_duration(&self) -> Option<u32> {
+        self.get_u32(15)
     }
     /// `ITEM_FIELD_FLAGS` (field 21): `0x08` wrapped, never alerts; `0x10` forces red status 4.
     pub fn item_flags(&self) -> Option<u32> {
@@ -467,7 +478,9 @@ impl ObjectFields {
             .map(|b| ((b >> 24) & 0xff) as u8)
     }
     /// `PLAYER_BYTES_3` byte 2 (public): the city-protector title, a race id (`Player.h:354`);
-    /// `UnitPVPName` (`0x609370`) appends `PVP_MEDAL<n>` when nonzero. vmangos never writes it.
+    /// `UnitPVPName` (`0x609370`) appends `PVP_MEDAL<n>` when nonzero. vmangos sets it to the
+    /// player's race in `Player::SetCityTitle` and clears it in `RemoveCityTitle`
+    /// (`Player.cpp:1092-1101`).
     pub fn player_pvp_medal(&self) -> Option<u8> {
         self.get_u32(FIELD_PLAYER_BYTES_3)
             .map(|b| ((b >> 16) & 0xff) as u8)

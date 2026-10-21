@@ -17,8 +17,8 @@
 //! The watches here: the unit-field bridge `0x51bbb0` on every unit with token flags; the unit
 //! type watchers `0x6041f0` and the player type watchers `0x5e2510` whose callbacks signal; the
 //! active player's `0x5de4b0`, rest-state and charmed-by watches registered in `0x5dd8a0`, its
-//! skill watches `0x5de180` and `0x5de470`, and the weapon arms of the visible-item watch
-//! `0x5e2810`.
+//! skill watches `0x5de180` and `0x5de470`, its ammunition watch `0x4c70b0`, and the weapon arms
+//! of the visible-item watch `0x5e2810`. The item watchers' signals are [`crate::item_watch`]'s.
 
 use benilla_protocol::messages::ObjectType;
 use benilla_protocol::{ObjectFields, OwnerFallback};
@@ -36,8 +36,10 @@ pub(crate) enum FieldNotice {
     /// Any other callback's own `0x515e50(guid, id)`: a type watcher's, a packet handler's or a
     /// cache answer's. It reaches every token naming `guid`, with no watcher of the unit's own.
     Signal { guid: u64, id: u16 },
-    /// `0x5de4b0` on the active player: the event its registration pushes as the argument
-    /// (`0x5de4b3`), with `"player"` (`0x5de4c1`).
+    /// A callback's `FrameScript_SignalEvent2(id, "%s", "player")`: `0x5de4b0` on the active
+    /// player, the event its registration pushes as the argument (`0x5de4b3`, `0x5de4c1`); the
+    /// ammunition watch's, the item slot path's and the ammo getters' record callback's
+    /// `UNIT_INVENTORY_CHANGED` (`0x4c7110`, `0x4c72e0`, `0x4c8509`).
     Player { id: u16 },
     /// `0x5de4e0` on `PLAYER_BYTES_2` byte 3: `UPDATE_EXHAUSTION` bare (`0x5de4e8`), then the
     /// rest-state line for the new state.
@@ -62,6 +64,9 @@ pub(crate) enum FieldNotice {
     /// `PVP_TOGGLE_OFF_VERBOSE` (`0x8606e0`, `0x8606c8`) as a chat line of type `0xa`
     /// (`0x5eeb5d`).
     PvpPreference { on: bool },
+    /// The drunk watcher `0x5e2a90` on any player's `PLAYER_BYTES_3` byte 1: the byte's copy and
+    /// its value now, from which the run signals and speaks (`crate::ui_unit::field_events`).
+    Drunk { guid: u64, old: u8, new: u8 },
     /// `FireTutorial(id, 0)` (`0x4b5390`) from a watcher on the active player: the number's
     /// fire-once bit tested and set, then its `TutorialPopup` cue and `TUTORIAL_TRIGGER` at once,
     /// in the watcher's order.
@@ -82,6 +87,7 @@ pub(crate) mod id {
     pub(crate) const UNIT_DISPLAYPOWER: u16 = 30;
     pub(crate) const UNIT_AURA: u16 = 41;
     pub(crate) const UNIT_NAME_UPDATE: u16 = 183;
+    pub(crate) const UNIT_INVENTORY_CHANGED: u16 = 186;
     pub(crate) const UNIT_CLASSIFICATION_CHANGED: u16 = 187;
     pub(crate) const PLAYER_FLAGS_CHANGED: u16 = 407;
     pub(crate) const UNIT_QUEST_LOG_CHANGED: u16 = 522;
@@ -91,6 +97,7 @@ pub(crate) mod id {
     pub(crate) const PET_ATTACK_STOP: u16 = 335;
     pub(crate) const PLAYER_GUILD_UPDATE: u16 = 345;
     pub(crate) const TABARD_CANSAVE_CHANGED: u16 = 376;
+    pub(crate) const PLAYER_UNGHOST: u16 = 401;
     pub(crate) const PLAYER_UPDATE_RESTING: u16 = 405;
     pub(crate) const PET_UI_UPDATE: u16 = 427;
     pub(crate) const PLAYTIME_CHANGED: u16 = 530;
@@ -126,6 +133,35 @@ pub(crate) fn guild_timestamp(
     .then(|| (fields.player_guild_id(), fields.player_guild_timestamp()))
 }
 
+/// `OnCharmOrSummonChanged` (`0x5e2660`), the player type watcher on the unit section's first 16
+/// bytes, `CHARM` then `SUMMON` (`0x5e257a`-`0x5e2588`): when it runs, each of the two guids as the
+/// copy held it that is nonzero (`0x5e26e0`) and no longer the field's value (`0x5e2709`-
+/// `0x5e2710`). The caller holds its other gates: the player is the active one or in the group
+/// (`0x5e266b`-`0x5e267f`), and the old guid names no unit (`0x5e26f7`-`0x5e26fe`), whose selection
+/// it tears down (`0x5e2719`).
+pub(crate) fn pets_moved_off(
+    block: &Notified,
+    kind: ObjectType,
+    fields: &ObjectFields,
+) -> Vec<u64> {
+    if kind != ObjectType::Player || block.fired(UNIT_SECTION, 0, 16).is_none() {
+        return Vec::new();
+    }
+    [
+        (UNIT_SECTION, fields.unit_charm()),
+        (UNIT_SECTION + 2, fields.unit_summon()),
+    ]
+    .into_iter()
+    .filter_map(|(lo, now)| {
+        let now = now.unwrap_or(0);
+        let copy = |index: u16, value: u32| block.edge(index).map_or(value, |(copy, _)| copy);
+        let old =
+            u64::from(copy(lo, now as u32)) | (u64::from(copy(lo + 1, (now >> 32) as u32)) << 32);
+        (old != 0 && old != now).then_some(old)
+    })
+    .collect()
+}
+
 /// The first field of the object, unit and player sections: their byte offsets in the field
 /// array, 0, 0x18 and 0x2f0 (`0x465690`), over 4.
 const OBJECT_SECTION: u16 = 0;
@@ -154,12 +190,17 @@ pub(crate) fn bridge_len(id: u16) -> u16 {
     }
 }
 
-/// The bridge's player-block watch, registered on a unit whose type mask has the player bit
-/// (`0x51bc2b`-`0x51bc31`): the quest log, 0xf0 bytes at the player section's `+0x28` (`0x51bc63`),
-/// signalling `0x20a` through `0x51bd90` (`0x51bd93`). Its twin over the visible items, `0x51bd70`
-/// (`0x51bc3c`) with `0xba` (`0x51bd73`), is not run here: `UNIT_INVENTORY_CHANGED` keeps its own
-/// producers.
+/// The bridge's two player-block watches, registered on a unit whose type mask has the player
+/// bit (`0x51bc2b`-`0x51bc31`) in this order: the 19 visible items, 0x390 bytes at the player
+/// section's `+0x118` (`0x51bc3c`), signalling `UNIT_INVENTORY_CHANGED` through `0x51bd70`
+/// (`0x51bd73`); the quest log, 0xf0 bytes at `+0x28` (`0x51bc63`), signalling `0x20a` through
+/// `0x51bd90` (`0x51bd93`).
+const VISIBLE_ITEMS_WATCH: (u16, u16) = (0x118, 0x390);
 const QUEST_LOG_WATCH: (u16, u16) = (0x28, 0xf0);
+
+/// The active player's ammunition watch `0x4c70b0`, `PLAYER_AMMO_ID` at the player section's
+/// `+0x102c`, registered at world entry (`0x4c6fea`, from `0x49097e`).
+const AMMO_ID: (u16, u16) = (0x102c, 4);
 
 /// `0x5de4b0`'s registrations in `0x5dd8a0`, in registration order: the byte offset in the player
 /// section, the length, and the event id pushed as the argument.
@@ -219,12 +260,14 @@ const ENTRY: (u16, u16) = (0xc, 4);
 
 /// The player type watchers of `0x5e2510` whose callbacks signal, as (byte offset, length) in the
 /// player section: `PLAYER_FLAGS` (`0x5e2850` → `0x5ee990`), `PLAYER_GUILDID` (`0x5e258f` →
-/// `0x5e2770`), `PLAYER_GUILDRANK` (`0x5e25a7` → `0x5e27b0`), `PLAYER_BYTES_3` bytes 2 and 3
-/// (`0x5e2a30`, `0x5e2a50`) and the duel team (`0x5e27d0`); and `PLAYER_GUILD_TIMESTAMP`
-/// (`0x5e25ef` → `0x5e2890`), which acts on the guild cache ([`guild_timestamp`]).
+/// `0x5e2770`), `PLAYER_GUILDRANK` (`0x5e25a7` → `0x5e27b0`), `PLAYER_BYTES_3` bytes 2, 3 and 1
+/// in that order (`0x5e2a30`, `0x5e2a50`, `0x5e2a90`) and the duel team (`0x5e27d0`); and
+/// `PLAYER_GUILD_TIMESTAMP` (`0x5e25ef` → `0x5e2890`), which acts on the guild cache
+/// ([`guild_timestamp`]).
 const PLAYER_FLAGS: (u16, u16) = (0x08, 4);
 const GUILD_ID: (u16, u16) = (0x0c, 4);
 const GUILD_RANK: (u16, u16) = (0x10, 4);
+const BYTES_3_BYTE_1: (u16, u16) = (0x1d, 1);
 const BYTES_3_BYTE_2: (u16, u16) = (0x1e, 1);
 const BYTES_3_BYTE_3: (u16, u16) = (0x1f, 1);
 const DUEL_TEAM: (u16, u16) = (0x20, 4);
@@ -519,14 +562,20 @@ pub(crate) fn values(
             // against the new flags.
             if around.me == Some(guid) {
                 let flags = fields.player_flags();
-                // 0x10, the ghost state (`0x5eeab4` → `0x5de9c0`): its tutorial when now set.
-                if flipped & 0x10 != 0 && flags & 0x10 != 0 {
-                    pass.push(
-                        at,
-                        FieldNotice::Tutorial {
-                            id: tutorial::DEATH,
-                        },
-                    );
+                // 0x10, the ghost state (`0x5eeab4` → `0x5de9c0`) on either edge: set, its
+                // tutorial (`0x5de9eb`-`0x5de9f0`); clear, `PLAYER_UNGHOST` (`0x5dea2a`).
+                if flipped & 0x10 != 0 {
+                    if flags & 0x10 != 0 {
+                        pass.push(
+                            at,
+                            FieldNotice::Tutorial {
+                                id: tutorial::DEATH,
+                            },
+                        );
+                    } else {
+                        let id = id::PLAYER_UNGHOST;
+                        pass.push(at, FieldNotice::Global { id });
+                    }
                 }
                 // 0x20, resting: the rest tutorial when now set (`0x5eeae6`-`0x5eeaed`), then
                 // `PLAYER_UPDATE_RESTING` on either edge (`0x5eead0`, `0x5eeaf2`).
@@ -572,10 +621,21 @@ pub(crate) fn values(
             pass.signal(at, guid, id::UNIT_NAME_UPDATE);
             pass.reaction(at, guid, fields, around);
         }
+        if let Some(at) = at(PLAYER_SECTION, BYTES_3_BYTE_1, List::Type) {
+            // `0x5e2a90`: the byte's copy (`0x5e2b59`) and the byte now (`0x5e2ac9`).
+            let (old, new) = block.edge(at.0).unwrap_or_default();
+            let byte = |v: u32| (v >> (8 * (BYTES_3_BYTE_1.0 % 4))) as u8;
+            let (old, new) = (byte(old), byte(new));
+            pass.push(at, FieldNotice::Drunk { guid, old, new });
+        }
         if let Some(at) = at(PLAYER_SECTION, DUEL_TEAM, List::Type) {
             pass.reaction(at, guid, fields, around);
         }
-        // The bridge's player-block watch.
+        // The bridge's player-block watches.
+        if let Some(at) = at(PLAYER_SECTION, VISIBLE_ITEMS_WATCH, List::Object) {
+            let id = id::UNIT_INVENTORY_CHANGED;
+            pass.push(at, FieldNotice::Unit { guid, id });
+        }
         if let Some(at) = at(PLAYER_SECTION, QUEST_LOG_WATCH, List::Object) {
             let id = id::UNIT_QUEST_LOG_CHANGED;
             pass.push(at, FieldNotice::Unit { guid, id });
@@ -609,6 +669,11 @@ pub(crate) fn values(
             if let Some(at) = at(PLAYER_SECTION, (offset, len), List::Object) {
                 pass.push(at, FieldNotice::Player { id });
             }
+        }
+        // `0x4c70b0` sets the ammunition model (`0x4c70fc`, not built) and signals (`0x4c7110`).
+        if let Some(at) = at(PLAYER_SECTION, AMMO_ID, List::Object) {
+            let id = id::UNIT_INVENTORY_CHANGED;
+            pass.push(at, FieldNotice::Player { id });
         }
         for k in 0..SKILLS {
             let value = SKILL_VALUE + SKILL_STRIDE * k;
@@ -809,6 +874,56 @@ mod tests {
         );
     }
 
+    /// The drunk watcher `0x5e2a90` is a player type watcher on `PLAYER_BYTES_3` byte 1
+    /// (`0x5e2637`-`0x5e2648`), so it runs on every player, after the byte 2 and byte 3 watchers
+    /// registered ahead of it (`0x5e2618`, `0x5e2630`), with the byte's copy (`0x5e2b59`) and the
+    /// byte now (`0x5e2ac9`). The other bytes of the dword do not run it. On the active player
+    /// the rank watch on the whole dword runs after it, the object's own list.
+    #[test]
+    fn the_drunk_watcher_runs_on_every_player_with_its_old_byte() {
+        const OTHER: u64 = 0x08;
+        let bytes_3 = pf(0x1c);
+        let mut other = player();
+        assert_eq!(
+            block(&mut other, Some(ME), OTHER, &[(bytes_3, 60 << 8)]),
+            [FieldNotice::Drunk {
+                guid: OTHER,
+                old: 0,
+                new: 60
+            }]
+        );
+        assert!(
+            block(&mut other, Some(ME), OTHER, &[(bytes_3, 60 << 8 | 1)]).is_empty(),
+            "the gender byte alone"
+        );
+        assert_eq!(
+            block(&mut other, Some(ME), OTHER, &[(bytes_3, 0x0102_0001)]),
+            [
+                signal(OTHER, id::UNIT_NAME_UPDATE),
+                signal(OTHER, id::UNIT_NAME_UPDATE),
+                signal(OTHER, id::UNIT_FACTION),
+                FieldNotice::Drunk {
+                    guid: OTHER,
+                    old: 60,
+                    new: 0
+                }
+            ],
+            "bytes 2, 3 and 1, in registration order"
+        );
+        let mut me = player();
+        assert_eq!(
+            block(&mut me, Some(ME), ME, &[(bytes_3, 90 << 8)]),
+            [
+                FieldNotice::Drunk {
+                    guid: ME,
+                    old: 0,
+                    new: 90
+                },
+                FieldNotice::Player { id: 524 }
+            ]
+        );
+    }
+
     /// A multi-dword watch runs once however many of its dwords moved; the stat bonus arrays
     /// between the coinage and the resistance mods have no watch.
     #[test]
@@ -877,19 +992,63 @@ mod tests {
                 &[(slot(15) + 2, 2504), (slot(16) + 5, 1), (slot(17) + 11, 3)]
             ),
             [
+                // The bridge's watch over all 19 slots, spliced at their first field ahead.
+                bridge(ME, id::UNIT_INVENTORY_CHANGED),
                 FieldNotice::Weapon { slot: 15 },
                 FieldNotice::Weapon { slot: 16 },
                 FieldNotice::Weapon { slot: 17 }
             ]
         );
-        // The chest (slot 4) and a ring (10) do not reach it.
-        assert!(block(
-            &mut me,
-            Some(ME),
-            ME,
-            &[(slot(4) + 2, 1), (slot(10) + 2, 1)]
-        )
-        .is_empty());
+        // The chest (slot 4) and a ring (10) do not reach it, only the bridge's.
+        assert_eq!(
+            block(
+                &mut me,
+                Some(ME),
+                ME,
+                &[(slot(4) + 2, 1), (slot(10) + 2, 1)]
+            ),
+            [bridge(ME, id::UNIT_INVENTORY_CHANGED)]
+        );
+    }
+
+    /// The bridge's visible-item watch (`0x51bc3c`): one over the 19 slots' 0x390 bytes at the
+    /// player section's `+0x118`, on every player, signalling `0xba` (`0x51bd73`) once a block.
+    #[test]
+    fn the_visible_item_bridge_runs_on_every_player_once_a_block() {
+        let mut other = player();
+        let first = pf(VISIBLE_ITEM);
+        let last = pf(VISIBLE_ITEM + 0x390 - 4);
+        assert_eq!(
+            block(&mut other, Some(ME), OTHER, &[(first + 2, 7366), (last, 1)]),
+            [bridge(OTHER, id::UNIT_INVENTORY_CHANGED)]
+        );
+        assert!(
+            block(&mut other, Some(ME), OTHER, &[(last + 1, 1)]).is_empty(),
+            "the inventory seats past it"
+        );
+        let mut mob = unit();
+        assert!(
+            block(&mut mob, Some(ME), MOB, &[(first + 2, 7366)]).is_empty(),
+            "a creature has no player block watch"
+        );
+    }
+
+    /// The ammunition watch `0x4c70b0`, registered on the active player alone at world entry
+    /// (`0x4c6fea`, from `0x49097e`): `PLAYER_AMMO_ID` signals `UNIT_INVENTORY_CHANGED` with
+    /// `"player"` (`0x4c7110`).
+    #[test]
+    fn the_ammo_watch_signals_the_active_player_alone() {
+        let ammo = pf(0x102c);
+        let mut me = player();
+        assert_eq!(
+            block(&mut me, Some(ME), ME, &[(ammo, 2512)]),
+            [FieldNotice::Player {
+                id: id::UNIT_INVENTORY_CHANGED
+            }]
+        );
+        assert!(block(&mut me, Some(ME), ME, &[(ammo, 2512)]).is_empty());
+        let mut other = player();
+        assert!(block(&mut other, Some(ME), OTHER, &[(ammo, 2512)]).is_empty());
     }
 
     const PET: u64 = 0xF140_0000_0000_0077;
@@ -1094,8 +1253,11 @@ mod tests {
             block(&mut other, Some(ME), OTHER, &[(198, 5), (257, 1)]),
             [bridge(OTHER, 522)]
         );
-        // Field 258, past the 60 dwords, is outside it.
-        assert!(block(&mut other, Some(ME), OTHER, &[(258, 1)]).is_empty());
+        // Field 258, past the 60 dwords, is outside it: the visible items' watch begins there.
+        assert_eq!(
+            block(&mut other, Some(ME), OTHER, &[(258, 1)]),
+            [bridge(OTHER, id::UNIT_INVENTORY_CHANGED)]
+        );
     }
 
     /// The active player's log carries the quest log's own watcher (`0x4de430`, registered after
@@ -1215,6 +1377,32 @@ mod tests {
         );
     }
 
+    /// `0x5ee990`'s ghost arm runs the ghost state `0x5de9c0` on either edge of bit 0x10
+    /// (`0x5eeab4` → `0x5eeabc`), after `PLAYER_FLAGS_CHANGED` (`0x5eea35`): set, its tutorial
+    /// (`0x5de9eb`-`0x5de9f0`); clear, `PLAYER_UNGHOST` (`0x5dea25`-`0x5dea2a`), with no gate
+    /// before it, so the health plays no part. Another player's ghost bit reaches neither.
+    #[test]
+    fn the_ghost_bit_runs_the_ghost_state_on_either_edge() {
+        let flags = pf(PLAYER_FLAGS.0);
+        let changed = signal(ME, 407);
+        let mut me = player();
+        assert_eq!(
+            block(&mut me, Some(ME), ME, &[(flags, 0x10)]),
+            [changed, FieldNotice::Tutorial { id: 0x18 }]
+        );
+        assert_eq!(
+            block(&mut me, Some(ME), ME, &[(flags, 0)]),
+            [changed, FieldNotice::Global { id: 401 }],
+            "with no health in the store"
+        );
+        let mut other = player();
+        block(&mut other, Some(ME), OTHER, &[(flags, 0x10)]);
+        assert_eq!(
+            block(&mut other, Some(ME), OTHER, &[(flags, 0)]),
+            [signal(OTHER, 407)]
+        );
+    }
+
     /// `0x5ff580` on `UNIT_FIELD_FLAGS`: the active player's combat bit first (`0x5ff4e0`), the
     /// reactions, then the combat bit of a unit whose charmer, else summoner, is the player.
     #[test]
@@ -1290,7 +1478,8 @@ mod tests {
     /// resting bit is now set (`0x5eeae6`-`0x5eeaed`, 0x1d), ahead of `PLAYER_UPDATE_RESTING`
     /// (`0x5eeaf7`); the PvP tutorial when the PvP bit is now set, after its reaction (`0x5ff756`,
     /// 0x1f); and the rest state's row for state 1 (`0x80af50`: 0x19) after its line (`0x5de542`).
-    /// A cleared bit, another unit and rest state 2 raise none.
+    /// A cleared bit, another unit and rest state 2 raise none; the ghost bit's clear signals
+    /// instead.
     #[test]
     fn the_flag_tutorials_ride_their_watchers_for_the_active_player() {
         let flags = pf(PLAYER_FLAGS.0);
@@ -1310,7 +1499,11 @@ mod tests {
             block(&mut me, Some(ME), ME, &[(flags, 0x10)]),
             [changed, tutorial(0x18)]
         );
-        assert_eq!(block(&mut me, Some(ME), ME, &[(flags, 0)]), [changed]);
+        assert_eq!(
+            block(&mut me, Some(ME), ME, &[(flags, 0)]),
+            [changed, FieldNotice::Global { id: 401 }],
+            "the ghost bit's clear runs the ghost state too, its event and no tutorial"
+        );
         let mut other = player();
         assert_eq!(
             block(&mut other, Some(ME), OTHER, &[(flags, 0x30)]),

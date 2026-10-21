@@ -98,6 +98,9 @@ pub struct ContainerSlot {
     pub enchants: Vec<super::EnchantView>,
     /// A timed item's lifetime left in ms (`SMSG_ITEM_TIME_UPDATE`), floored to the second.
     pub duration_ms: Option<u64>,
+    /// `ITEM_FIELD_DURATION` as the object carries it (`[item+0x114]+0x24`), 0 for none: a
+    /// nonzero one refuses the auction sell slot (`0x4ce411`).
+    pub field_duration: u32,
     /// A signable charter's petition, printed between the name and the green `ITEM_SIGNABLE`
     /// line; `None` until the record the hover queries arrives.
     pub petition: Option<PetitionSlotView>,
@@ -149,8 +152,9 @@ pub enum UseFork {
     Read,
     /// A mail letter, the instance's `ITEM_FIELD_ITEM_TEXT_ID`, opens the reader.
     Letter,
-    /// A lootable template sends `CMSG_OPEN_ITEM` (`0x5d8f7c`), locking the item first
-    /// (`0x5edcd9`).
+    /// A lootable template sends `CMSG_OPEN_ITEM` (`0x5d8f7c`) through `OpenItem`, which locks
+    /// the item (`0x5edcd9`) after its `SetAutoLoot` (`0x5edcb6`): the host's, as that store
+    /// sweeps an open window first.
     Open,
     /// The plain use, and a slot whose template is still in flight, which `0x5d9ff0` reads as
     /// not equippable.
@@ -173,7 +177,8 @@ pub enum UseArm {
 }
 
 /// One `UseContainerItem` call past its gates: the slot, the item it resolved (`0x4fa1a6`) and
-/// the arm it took, whose lock the call has already taken.
+/// the arm it took, whose lock the call has already taken, but the open arm's, which the host
+/// takes ([`UseFork::Open`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ContainerUse {
     pub bag: i64,
@@ -546,9 +551,7 @@ fn use_cleared(
         may_cast,
     }));
     match arm {
-        UseArm::Withdraw | UseArm::Deposit | UseArm::Sell | UseArm::Item(UseFork::Open) => {
-            cursor::lock_item(model, guid);
-        }
+        UseArm::Withdraw | UseArm::Deposit | UseArm::Sell => cursor::lock_item(model, guid),
         UseArm::Item(UseFork::WrapPaper) => arm_gift_wrap(model, bag, slot),
         UseArm::Item(_) => {}
     }
@@ -619,14 +622,15 @@ fn arm_gift_wrap(model: &mut super::Model, bag: i64, slot: u32) {
 /// - a split carry places onto an empty or same-item slot, and stays held over another item;
 /// - a vendor row buys into the slot, and an item off the bar is cleared.
 ///
-/// Returns the item a pickup puts on the cursor, which the binding sets past this segment
-/// ([`cursor::pick_up_item`]), so the setter's inner clear signals on its own.
+/// Returns what the binding owes past this segment: the item a pickup puts on the cursor
+/// ([`cursor::pick_up_item`]), so the setter's inner clear signals on its own, or the armed
+/// spell's pick, which applies through the host inside the verb.
 fn pickup_container_item(
     model: &mut super::Model,
     bag: i64,
     slot: u32,
     may_cast: bool,
-) -> Option<CursorItem> {
+) -> ContainerClick {
     // An armed gift wrap completes here, before the cursor is read. `PickupContainerItem` is the
     // only caller of the wrap sender `0x5edfc0`, so an equipped item cannot be wrapped.
     if let Some(wrap) = model.pending_wrap {
@@ -637,7 +641,7 @@ fn pickup_container_item(
             .and_then(|c| c.slots.get(&slot))
             .is_some_and(|s| s.item_id != 0)
         {
-            return None;
+            return ContainerClick::Done;
         }
         // A vanished paper also bails, the wrap armed and the paper locked (`0x5edfef`).
         if !model
@@ -646,7 +650,7 @@ fn pickup_container_item(
             .and_then(|c| c.slots.get(&wrap.slot))
             .is_some_and(|s| s.item_id != 0)
         {
-            return None;
+            return ContainerClick::Done;
         }
         // No eligibility test: the server refuses with an `ERR_CANT_WRAP_*` reason
         // (`SMSG_INVENTORY_CHANGE_FAILURE` 43-48), and a local gate would eat that error line.
@@ -657,7 +661,7 @@ fn pickup_container_item(
         cursor::unlock_item(model, wrap.guid);
         model.ui_cursor = None;
         model.ui_cursor_dirty = true;
-        return None;
+        return ContainerClick::Done;
     }
     // Only a held item (`0x4f9c38`) or a held row, a vendor's or the bar's (`0x4f9c43`), takes the
     // click first. Past them an empty slot does nothing (`0x4f9c4e`), an armed item-targeting
@@ -675,7 +679,7 @@ fn pickup_container_item(
             .and_then(|c| c.slots.get(&slot))
             .is_some_and(|s| s.item_id != 0);
         if occupied && model.item_pick_armed {
-            model.item_picks.push(cursor::ItemPick {
+            return ContainerClick::Pick(cursor::ItemPick {
                 bag,
                 slot,
                 may_cast,
@@ -683,7 +687,7 @@ fn pickup_container_item(
         } else if occupied {
             model.container_repairs.push((bag, slot));
         }
-        return None;
+        return ContainerClick::Done;
     }
     match model.cursor.clone() {
         // The lock gate reads the item's own bit (`0x4f9dc4`), the app's or the client's.
@@ -699,11 +703,13 @@ fn pickup_container_item(
             .get(&bag)
             .and_then(|c| c.slots.get(&slot))
             .filter(|s| s.item_id != 0 && !cursor::item_locked(model, s.guid))
-            .map(|s| s.cursor_item(bag, slot)),
+            .map_or(ContainerClick::Done, |s| {
+                ContainerClick::PickUp(s.cursor_item(bag, slot))
+            }),
         // The cancel is `ClearCursor(1,1)` (`0x4f9e0e`): the unlock, then `CURSOR_UPDATE`.
         Some(CursorPayload::Item(held)) if held.bag == bag && held.slot == slot => {
             cursor::clear_cursor(model);
-            None
+            ContainerClick::Done
         }
         Some(CursorPayload::Item(held)) => {
             // Cloned so the moves below can borrow `model`; an unresolved slot reads as empty.
@@ -737,14 +743,14 @@ fn pickup_container_item(
                     cursor::clear(model, cursor::Clear::KEEP_LOCK);
                 }
             }
-            None
+            ContainerClick::Done
         }
         // Mode 5, a held vendor row, buys into this slot whatever it holds (`0x4f9efa` tests
         // `[0xb4d900] == 5`): `CMSG_BUY_ITEM_IN_SLOT` (0x1a3) with count 1, and the cursor clears
         // either way; with no vendor open the row stays held (`0x4f9f0f`). Deviation: a row that
         // no longer resolves is refused, as `0x4c7300` does, because this path dereferences it
         // unchecked (`0x4f9f35`), a latent null deref.
-        Some(CursorPayload::Merchant(_)) if model.merchant.is_none() => None,
+        Some(CursorPayload::Merchant(_)) if model.merchant.is_none() => ContainerClick::Done,
         Some(CursorPayload::Merchant(held)) => {
             let entry = model
                 .merchant
@@ -756,14 +762,24 @@ fn pickup_container_item(
                 model.merchant_slot_buys.push((bag, slot, entry));
             }
             cursor::clear_cursor(model);
-            None
+            ContainerClick::Done
         }
         // Mode 7, an item off the bar, is a held row too, and only cleared (`0x4f9f41`).
         Some(CursorPayload::Action(_)) => {
             cursor::clear_cursor(model);
-            None
+            ContainerClick::Done
         }
     }
+}
+
+/// What a bag click leaves its binding past the click's segment.
+enum ContainerClick {
+    /// Done inside the segment.
+    Done,
+    /// The item a pickup puts on the cursor.
+    PickUp(CursorItem),
+    /// The armed item-targeting spell's pick (`0x4f9c54`), a call for the host.
+    Pick(cursor::ItemPick),
 }
 
 /// Queue one move, the shared tail of every clearing branch above.
@@ -1081,10 +1097,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             // An armed item-targeting spell binds the item through `BindSpellTargetObject`, behind
             // the gate's tag 2.
             let may_cast = protected::gate(lua, Tag::CAST);
-            if let Some(item) = super::tick::verb(lua, |model| {
+            match super::tick::verb(lua, |model| {
                 pickup_container_item(model, bag, slot, may_cast)
             }) {
-                cursor::pick_up_item(lua, item);
+                ContainerClick::Done => {}
+                ContainerClick::PickUp(item) => cursor::pick_up_item(lua, item),
+                ContainerClick::Pick(pick) => {
+                    super::calls::submit(lua, super::ScriptCall::PickItem(pick))?
+                }
             }
             Ok(())
         })?,
@@ -1296,6 +1316,7 @@ mod tests {
                 use_fork: Default::default(),
                 item_class: None,
                 duration_ms: None,
+                field_duration: 0,
                 petition: None,
                 already_bound: false,
                 occupied_seats: None,
@@ -1667,9 +1688,12 @@ mod tests {
         s.run_binding(r#"RunScript("PickupContainerItem(0, 1)")"#)
             .unwrap();
         assert_eq!(
-            s.take_item_picks()
-                .iter()
-                .map(|p| (p.bag, p.slot, p.may_cast))
+            s.take_script_calls()
+                .into_iter()
+                .map(|c| match c {
+                    super::super::ScriptCall::PickItem(p) => (p.bag, p.slot, p.may_cast),
+                    other => panic!("not a pick: {other:?}"),
+                })
                 .collect::<Vec<_>>(),
             [(0, 1, true), (0, 1, false), (0, 1, true)]
         );
@@ -1808,13 +1832,14 @@ mod tests {
         assert_eq!(s.take_ui_errors(), vec!["ERR_CANT_USE_ITEM"]);
         assert!(!s.item_locked(0x11));
 
-        // Control back, the requirement met: the open locks and goes out.
+        // Control back, the requirement met: the open goes out, for the host to lock past its
+        // `SetAutoLoot` (`0x5edcb6`, `0x5edcd9`).
         s.set_player_control(true);
         s.set_item_template(871, template(0, 0, 5));
         s.run("UseContainerItem(0, 1)").unwrap();
         assert!(s.take_ui_errors().is_empty());
         assert_eq!(s.take_script_calls().len(), 1);
-        assert!(s.item_locked(0x11));
+        assert!(!s.item_locked(0x11));
     }
 
     /// The dispatcher's order (`0x5d8d00`): the gift, wrapping paper and quest-starter arms run
@@ -2049,6 +2074,7 @@ mod tests {
                 use_fork: Default::default(),
                 item_class: None,
                 duration_ms: None,
+                field_duration: 0,
                 petition: None,
                 already_bound: false,
                 occupied_seats: None,

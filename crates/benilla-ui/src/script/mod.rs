@@ -229,13 +229,16 @@ pub use bind_confirm::PendingEquipAnswer;
 pub use binding_abi::{ftol, s_str_to_float, s_str_to_int};
 pub use calls::{NearestMode, QueuedCall, ScriptCall};
 pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
-pub use channel::{ChannelCommand, RecruitmentPlan, RecruitmentRun, ZoneChannelRow};
+pub use channel::{ChannelCommand, JoinedChannel, RecruitmentPlan, ZoneChannelRow};
 pub use char_stats::{
     weapon_subclass_skill, BankBagSlots, InvSlotView, InventorySlots, UnitCombatStats,
     BANK_BAG_SLOT_COUNT, INVENTORY_SLOT_COUNT, SKILL_DEFENSE, SKILL_UNARMED,
 };
 pub use chat_misc::EmoteRequest;
-pub use chat_send::{ChatGroup, ChatSend, SEND_CHAT_TOKENS};
+pub use chat_send::{
+    expand_target_tokens, validate_escapes, ChatGroup, ChatSend, InvalidEscape, INVALID_ESCAPE,
+    SEND_CHAT_TOKENS,
+};
 pub use chat_types::ChatTypeColor;
 pub use chat_window::{message_group_index, ChatWindowLook, MESSAGE_GROUPS};
 pub use console_exec::s_str_tokenize;
@@ -300,7 +303,7 @@ pub use worldmap_arrow::ARROW_MODEL;
 
 pub(crate) use button::{refresh_label_lua, state_font_lua, LabelFont};
 pub(crate) use font_block::{face_loads, own_font_lua, SAME_FONT_HEIGHT};
-pub use inspect::{InspectView, UnitReach};
+pub use inspect::UnitReach;
 pub use item_stats::{
     item_usable, ItemRecipe, ItemSetView, ItemSpellLine, ItemTemplateView, PlayerReqState,
     TaughtSpell,
@@ -308,7 +311,7 @@ pub use item_stats::{
 pub use item_text::ItemTextState;
 pub use layout_cache::{AnchorLayout, FrameLayout, LayoutPoint};
 pub use lock_check::{check_lock, LockCheck, LockOpener, LockOpeners, LockSlotView};
-pub use loot::{LootRow, LootState, LOOT_PORTRAIT_UNIT};
+pub use loot::{LootCall, LootRow, LootState, LOOT_PORTRAIT_UNIT};
 pub use loot_roll::{LootRollEntry, LootRollsState};
 pub use macros::{
     MacroBinding, MacroState, MacroView, CHARACTER_ID_BASE, MAX_MACROS, MAX_MACRO_BODY,
@@ -352,8 +355,8 @@ pub use skills::{SkillEntry, SkillsState};
 pub use social::{FriendInfo, SocialRequest, SocialState, WhoInfo};
 pub use sound::{MusicRequest, SoundRequest};
 pub use spellbook::{
-    resolve_spell_by_name, resolve_spell_in_books, NamedSpell, PetBookState, SpellBookState,
-    SpellSlotView, SpellTabName, SpellTabView,
+    resolve_spell_in_books, NamedSpell, PetBookState, SpellBookState, SpellSlotView, SpellTabName,
+    SpellTabView,
 };
 pub use stable::{StableIntent, StablePetSlot, StableState, NUM_STABLE_SLOTS};
 pub use summon::SummonConfirmUiState;
@@ -374,7 +377,7 @@ pub use types::{
     ExtractedQuad, FontObject, FontShadow, Gradient, JustifyH, JustifyV, LineMeasureRequest,
     MeasureRequest, Outline, QuadContent, ScriptValue, TexCoords, TextShadow,
 };
-pub use unit::by_name::{self, NameCandidate};
+pub use unit::by_name::{self, NameCandidate, SeatedSelection};
 pub use unit::{
     grey_band, level_reads_unknown, parse_unit_token, power_token, unit_is_grey, PlayerRecord,
     SelectionRequest, UnitBase, UnitGuids, UnitRelations, UnitState, UnitTokenParse,
@@ -849,8 +852,12 @@ impl UiScript {
         let session = NEXT_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut model = self.model_ref().clone();
         model.session = session;
+        // What waits is the original's host's, and its handlers' values its VM's.
+        model.script_calls.clear();
         lua.set_app_data(model);
+        // A fork is a VM of its own, so it carries the profiler's slot and the call host's.
         handler_prof::install(&lua);
+        host::install(&lua);
         UiScript {
             lua,
             instructions: Default::default(),
@@ -1111,16 +1118,20 @@ impl UiScript {
 
     /// Run a chunk under the name the 1.12 client gives it ([`addon_chunk_name`] for addon files).
     pub fn run_chunk_named(&self, chunk: &[u8], name: &str) -> mlua::Result<()> {
-        self.lua
-            .load(crate::source::chunk(chunk))
-            .set_name(name)
-            .set_mode(mlua::ChunkMode::Text)
-            .exec()
+        host::unheld(&self.lua, || {
+            self.lua
+                .load(crate::source::chunk(chunk))
+                .set_name(name)
+                .set_mode(mlua::ChunkMode::Text)
+                .exec()
+        })
     }
 
     /// Load and evaluate a Lua chunk, returning its result: for tests and one-shot queries.
     pub fn eval<T: mlua::FromLuaMulti>(&self, chunk: &str) -> mlua::Result<T> {
-        self.lua.load(chunk).set_mode(mlua::ChunkMode::Text).eval()
+        host::unheld(&self.lua, || {
+            self.lua.load(chunk).set_mode(mlua::ChunkMode::Text).eval()
+        })
     }
 
     /// How many values the Lua expression `expr` returns (`"GetItemInfo(1)"`, not a chunk), zero
@@ -1623,7 +1634,10 @@ impl UiScript {
             return;
         };
         for arg in pending {
-            if let Err(e) = arg.value(&self.lua).and_then(|v| handler.call::<()>(v)) {
+            let ran = host::unheld(&self.lua, || {
+                arg.value(&self.lua).and_then(|v| handler.call::<()>(v))
+            });
+            if let Err(e) = ran {
                 self.model_mut()
                     .errors
                     .push(format!("error handler itself failed: {e}"));

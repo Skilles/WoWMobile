@@ -123,6 +123,16 @@ const MAX_DIST_SQ: f32 = 20.0 * 20.0;
 /// far to read.
 const DIM_ALPHA: u8 = 178;
 
+/// The alpha of `guid`'s plate off the selected guid (`0x7cb9d7`-`0x7cb9f9`): full with nothing
+/// selected or on the selected unit's own plate, else dimmed, so a selection whose object is not
+/// held, a party member out of range, dims every plate.
+fn plate_alpha(selection: &Selection, guid: u64) -> u8 {
+    match selection.guid {
+        Some(selected) if selected != guid => DIM_ALPHA,
+        _ => 255,
+    }
+}
+
 /// The bar-fill palette, the dwords at `0xcf60d0`/`e8`/`c8`/`dc`, in sRGB.
 const PLATE_HOSTILE: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 const PLATE_NEUTRAL: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
@@ -332,33 +342,28 @@ fn drive_vplates(
     group: Res<crate::ui_party::GroupState>,
     mut mouse_told: Local<crate::ui_script::VmMemo<Option<bool>>>,
 ) {
-    vm.turn(|script, world| {
+    // The plates' widgets change after the turn, with the host lent: each plate's `OnShow` and
+    // `OnHide` run in place as the walk shows or hides it, so a call one makes applies inside its
+    // verb.
+    let step = vm.turn(|script, world| {
         plates.0.clear();
         bucket.clear();
         // Every early return retires the plates first, or the widgets stay on screen; the reference
         // hides each live plate and returns it to the pool (`0x608a10`).
-        let retire_all = |script: Option<&mut benilla_ui::script::UiScript>| {
-            if let Some(script) = script {
-                script.retire_nameplates();
-            }
-        };
         if !mode.enemies && !mode.friends {
-            retire_all(script);
-            return;
+            return PlateStep::Retire;
         }
         let (Ok((cam, cam_pose)), Ok((self_tf, self_store))) =
             (world.camera.single(), world.self_q.single())
         else {
-            retire_all(script);
-            return;
+            return PlateStep::Retire;
         };
         let Some(script) = script else {
-            return;
+            return PlateStep::Retire;
         };
         let cam_tf = GlobalTransform::from(*cam_pose);
         let Some(viewport) = cam.logical_viewport_size() else {
-            script.retire_nameplates();
-            return;
+            return PlateStep::Retire;
         };
         let basis = plate_basis(viewport);
         let gx = |v: f32| gx_px(v, basis);
@@ -381,7 +386,6 @@ fn drive_vplates(
         let hovered_key = script.hovered_nameplate();
         let clicked = script.take_nameplate_clicks();
         let my_level = self_store.and_then(|s| s.0.unit_level()).unwrap_or(1);
-        let has_target = world.selection.target.is_some();
         let (rel, me) = (world.relations.get(), world.relations.me());
 
         let (pw, ph) = (gx(PLATE_W), gx(PLATE_H));
@@ -483,11 +487,7 @@ fn drive_vplates(
         for (_, screen, anchor, rank, is_player, entity, guid, store) in cands {
             plates.0.insert(entity);
 
-            let alpha = if !has_target || world.selection.target == Some(entity) {
-                255
-            } else {
-                DIM_ALPHA
-            };
+            let alpha = plate_alpha(&world.selection, guid.0);
             let tint = plate_tint(rank, is_player);
             // `WOW_VPLATE_TRACE=1` prints each plate rect in logical px.
             static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -614,7 +614,7 @@ fn drive_vplates(
 
         // The widget layer rewrites the static anchors only when this moves, so an addon's own
         // re-anchoring survives between resizes.
-        script.sync_nameplates(
+        PlateStep::Sync(
             PlateGeometry {
                 width: pw / seam,
                 height: ph / seam,
@@ -633,9 +633,35 @@ fn drive_vplates(
                 // which the shared text arm would otherwise scale it by.
                 shadow_offset: 1.0 / seam,
             },
-            &states,
-        );
-    })
+            states,
+        )
+    });
+    vm.run(|script| {
+        let Some(script) = script else {
+            return;
+        };
+        match step {
+            PlateStep::Retire => script.retire_nameplates(),
+            PlateStep::Sync(geometry, states) => script.sync_nameplates(geometry, &states),
+        }
+    });
+}
+
+/// [`drive_vplates`] as a one-shot, for a test over the whole client.
+#[cfg(test)]
+pub(crate) fn drive_vplates_once(world: &mut World) {
+    use bevy::ecs::system::RunSystemOnce;
+    world
+        .run_system_once(drive_vplates)
+        .expect("the plate driver runs as a one-shot system");
+}
+
+/// What [`drive_vplates`]'s turn leaves the widget layer to do.
+enum PlateStep {
+    /// Hide every live plate and return it to the pool.
+    Retire,
+    /// Seat these plates at this geometry.
+    Sync(PlateGeometry, Vec<PlateState>),
 }
 
 /// The plate driver's set; the overhead-name driver runs after it.
@@ -666,6 +692,9 @@ impl Plugin for VPlatesPlugin {
             );
     }
 }
+
+#[cfg(test)]
+mod unheld_tests;
 
 #[cfg(test)]
 mod tests {

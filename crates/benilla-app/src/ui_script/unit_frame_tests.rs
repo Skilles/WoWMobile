@@ -37,6 +37,9 @@ fn load_unit_frames_with(s: &UiScript, extra: &[&str]) {
         // `GetDifficultyColor` (`QuestLogFrame.lua:585`), which `TargetFrame_CheckLevel` asks for
         // an attackable target (`TargetFrame.lua:130`).
         r"Interface\FrameXML\QuestLogFrame.lua",
+        // `StaticPopup_Hide`, which UIParent's `PLAYER_UNGHOST` arm calls (`UIParent.lua:251-257`)
+        // at a live arrival.
+        r"Interface\FrameXML\StaticPopup.xml",
     ];
     for file in super::test_ui::production_order(&[UNIT_FRAMES, extra]) {
         load_xml(s, file);
@@ -513,6 +516,8 @@ fn raid_mark_clicks_through_the_nested_level() {
         master_looter: None,
         loot_threshold: 2,
     });
+    // The resolver's inputs, which `SetRaidTarget` reads the token through (`0x4bbeff`).
+    s.seat_player_guid(0x5E1F);
     s.resolve();
 
     let (cx, cy) = s
@@ -561,7 +566,7 @@ fn raid_mark_clicks_through_the_nested_level() {
     assert_eq!(
         s.take_party_requests(),
         vec![benilla_ui::script::PartyRequest::SetRaidTarget {
-            unit: "player".into(),
+            guid: 0x5E1F,
             index: 8
         }],
         "Skull queues the mark intent for the menu's unit"

@@ -7,7 +7,6 @@
 
 use bevy::prelude::*;
 
-use crate::client_state::ClientState;
 use crate::ui_script::UiFeed;
 use crate::ui_unit::UnitFeed;
 
@@ -30,7 +29,8 @@ pub(crate) mod validator;
 // The one cast path: every caster takes [`CastLadder`] and commits through [`CastCommit`];
 // `send_spell_cast` is private to `cast_send`, so no second send path can exist.
 pub(crate) use cast_send::{
-    CastCommit, CastLadder, HeldCast, HeldForPick, ScriptCastPermit, TargetedBind,
+    CastCommit, CastLadder, HeldCast, HeldForPick, PetGcdsOwed, ScriptCastPermit, TargetedBind,
+    UnitAttackOwed, UnitPress,
 };
 pub(crate) use cast_target::AutoSelfCast;
 pub(crate) use cooldowns::Cooldowns;
@@ -45,7 +45,9 @@ pub(crate) use mods::{
 pub(crate) use mods::{OP_COOLDOWN, OP_RANGE};
 pub(crate) use range_units::{RangeUnits, DEFAULT_REACH};
 pub(crate) use reads::{SpellLevel, SpellReads, UnitField, Unrecorded};
-pub(crate) use report::{CastCore, CastSlots, CursorCancel, Held, REASON_ERROR};
+pub(crate) use report::{
+    CastCore, CastSlots, CursorCancel, Held, REASON_ERROR, REASON_TARGETS_DEAD,
+};
 // `TargetingWants` is exported for the ground reticle, which draws for the location word alone.
 pub(crate) use targeting::{
     ground_cast_radius, CorpsePick, CursorPicks, PicksSelf, ScriptCursor, SpellTargeting,
@@ -79,6 +81,8 @@ impl Plugin for SpellPlugin {
             .init_resource::<AutoSelfCast>()
             .init_resource::<SpellTargeting>()
             .init_resource::<HeldForPick>()
+            .init_resource::<PetGcdsOwed>()
+            .init_resource::<UnitAttackOwed>()
             .init_resource::<ScriptCastPermit>()
             .init_resource::<CursorPicks>()
             .init_resource::<targeting::EnchantConfirmItem>()
@@ -90,8 +94,7 @@ impl Plugin for SpellPlugin {
             .add_systems(
                 Update,
                 (
-                    (inflight::reap_lapsed_cast, inflight::local_self_cancel)
-                        .chain()
+                    inflight::local_self_cancel
                         .in_set(UnitFeed)
                         .in_set(LocalCancel),
                     mods::track_class_family
@@ -120,13 +123,8 @@ impl Plugin for SpellPlugin {
                     group_relation::publish_group_roster
                         .in_set(UiFeed)
                         .before(UnitFeed),
-                    // The item-target commit (`0x495d60`): after the input pass so a bag click
-                    // binds the same frame; outside the target chain, as its clicks never reach
-                    // the world.
-                    targeting::commit_item_cast_on_pick.in_set(crate::ui_script::UiDrain),
                 ),
-            )
-            .add_systems(OnEnter(ClientState::InWorld), mods::clear_on_world_enter);
+            );
         net::register(app);
     }
 }

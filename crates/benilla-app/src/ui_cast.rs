@@ -55,6 +55,10 @@ pub(crate) enum CastReport {
     /// (`0x6e589d`) and the active player's form change (`0x5de016`). The trade slot's bind
     /// (`0x6e6939`) signals it too; benilla does not build that bind (#88).
     Changed,
+    /// The auto-repeat key `0xceac30` stored or cleared: `START_AUTOREPEAT_SPELL` (435) as the
+    /// send stores it (`0x6e594c`, `0x6e5952`), `STOP_AUTOREPEAT_SPELL` (436) as
+    /// `StopAutoRepeatSpell` clears it (`0x6ea16a`, `0x6ea170`).
+    AutoRepeat(bool),
 }
 
 /// Our cast's reports in the order they were made: one queue, so a refusal's line precedes its
@@ -84,6 +88,11 @@ impl CastReports {
     /// `0x4b3250` ([`CastReport::Changed`]).
     pub(crate) fn changed(&mut self) {
         self.0.push(CastReport::Changed);
+    }
+
+    /// The auto-repeat key's edge ([`CastReport::AutoRepeat`]).
+    pub(crate) fn auto_repeat(&mut self, on: bool) {
+        self.0.push(CastReport::AutoRepeat(on));
     }
 
     /// The refusals queued, in order.
@@ -244,8 +253,8 @@ fn edge_event(
     }
 }
 
-/// A report made ready for the VM: everything outside it (a line's sound, a chat or combat-log
-/// line) is done, and what runs Lua is left, so it can run with the call host back in place.
+/// A report made ready for the VM: everything outside it (a line's sound, a chat line, a log
+/// file's tee) is done, and what runs Lua is left, so it can run with the call host back in place.
 pub(crate) enum Ready {
     /// `0x6e1a3c`: a refusal of the armed tradeskill repeat's spell ends the repeat.
     TradeSkillCastFailed(u32),
@@ -290,10 +299,13 @@ impl CastReporter<'_, '_> {
                         out.push(Ready::TradeSkillCastFailed(fail.spell_id));
                     }
                     if let Some(resolved) = self.lines.resolve(script, fail) {
-                        if let Some(log) = resolved.log {
-                            self.sink.chat.push_combat(log);
-                        }
                         out.extend(self.line(resolved.shown));
+                        // After the line (`0x6e21dd`), `0x6e21fc` → `LogCastFailure 0x62c360`,
+                        // whose line fires its chat event inside the report.
+                        if let Some(log) = resolved.log {
+                            let written = self.sink.chat.write_combat_now(script, &log);
+                            out.extend(written.into_iter().map(|(e, args)| Ready::Event(e, args)));
+                        }
                     }
                 }
                 CastReport::Bar(edge) => out.extend(
@@ -305,6 +317,12 @@ impl CastReporter<'_, '_> {
                     Ready::Event("ACTIONBAR_UPDATE_STATE", vec![]),
                     Ready::Event("CURRENT_SPELL_CAST_CHANGED", vec![]),
                 ]),
+                CastReport::AutoRepeat(true) => {
+                    out.push(Ready::Event("START_AUTOREPEAT_SPELL", vec![]))
+                }
+                CastReport::AutoRepeat(false) => {
+                    out.push(Ready::Event("STOP_AUTOREPEAT_SPELL", vec![]))
+                }
             }
         }
         out

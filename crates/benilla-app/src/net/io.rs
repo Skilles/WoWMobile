@@ -1410,6 +1410,11 @@ pub(super) fn writer_loop(
                         packed,
                         target_guid,
                     } => w.pet_action(pet_guid, packed, target_guid),
+                    ClientCommand::PetCastSpell {
+                        caster_guid,
+                        spell_id,
+                        target,
+                    } => w.pet_cast_spell(caster_guid, spell_id, target),
                     ClientCommand::PetSetAction { pet_guid, entries } => {
                         w.pet_set_action(pet_guid, &entries)
                     }
@@ -1776,6 +1781,7 @@ pub(super) fn writer_loop(
                         threshold,
                     } => w.loot_method(method, master, threshold),
                     ClientCommand::SetRaidTarget { icon, guid } => w.raid_target_set(icon, guid),
+                    ClientCommand::RequestRaidTargets => w.raid_target_request(),
                     ClientCommand::MinimapPing { x, y } => w.minimap_ping(x, y),
                     ClientCommand::GroupChangeSubGroup { name, group } => {
                         w.group_change_sub_group(&name, group)

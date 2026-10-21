@@ -8,7 +8,8 @@
 //!
 //! Kept from 1.12: the validity filters (`0x493e40`, `CanAttack 0x606980`, critters), the
 //! [`commit`] through `SetSelection` (`0x493540`), the attack acquire (`0x612df0` at `0x6130b5`),
-//! the ATTACKERSTATEUPDATE acquire (`0x6259c9`–`0x6259fe`) and the 41 yd range.
+//! the ATTACKERSTATEUPDATE and spell start acquires (`0x6259c9`–`0x6259fe`, `0x6e7963`-`0x6e799c`)
+//! and the 41 yd range.
 
 use benilla_formats::CreatureTypeTable;
 use benilla_protocol::{guid, EntityKind};
@@ -455,6 +456,8 @@ pub(super) struct CommitOutcome {
 /// re-swing: StopAttack `0x5ecac0` (`0x493a08`) flags a stop in flight (`[player+0xc54]`),
 /// `CMSG_SET_SELECTION` goes out (`0x493857`), then unless the new target is us `Attack 0x5ecb70`
 /// swings past its already-attacking gate, or stops if `new_attackable` is false (`0x4938a1`).
+/// `entity` is the guid's object, which the select lights (`0x493701`); with none the guid is
+/// stored all the same (`0x4935c8` → `0x493605`), and neither `IsSelectable` nor the light runs.
 ///
 /// The latch (`0x493637`) reduces to `engaged && had_old`: vmangos ends [`Engaged`] when the
 /// victim dies, before a TAB can land, so the old target's own legs change nothing seen.
@@ -463,7 +466,7 @@ pub(super) struct CommitOutcome {
 pub(super) fn commit(
     selection: &mut Selection,
     seam: &mut crate::creature_anim::AttackSeam,
-    entity: Entity,
+    entity: Option<Entity>,
     guid: u64,
     target_store: Option<&ObjectStore>,
     engaged: bool,
@@ -489,8 +492,9 @@ pub(super) fn commit(
         // The old target's teardown (`0x4936cc` → `0x493910`) closes its loot first.
         seam.close_loot_on(old);
     }
-    selection.target = Some(entity);
+    selection.target = entity;
     selection.guid = Some(guid);
+    selection.lit = entity;
     let stop_and_repoint = engaged && had_old;
     if stop_and_repoint {
         // `0x493a08`: the real StopAttack, which also un-queues a next-swing strike (`0x6e6f30`).
@@ -499,9 +503,10 @@ pub(super) fn commit(
     let _ = seam.net.0.send(ClientCommand::SetSelection { guid });
     let swung = stop_and_repoint && new_attackable && self_guid != Some(guid);
     if swung {
-        // `0x4938c8`: the swing goes out despite the lock, and cancels auto-repeat (`0x6ea080`),
-        // unless StartAttack's gate returns first.
-        seam.start(guid, engaged, true);
+        // `0x4938c8`: the swing goes out despite the lock, the stop just set `[+0xc54]`
+        // (`0x5eccda`), and cancels auto-repeat (`0x6ea080`), unless StartAttack's gate returns
+        // first.
+        seam.start(guid, engaged);
     }
     CommitOutcome {
         changed: true,
@@ -587,7 +592,7 @@ pub(super) fn cycle(
     let out = commit(
         selection,
         seam,
-        entity,
+        Some(entity),
         guid,
         scan.store_at(entity),
         engaged,
@@ -755,8 +760,10 @@ pub(crate) struct AttackNearestRequest;
 #[derive(Resource, Default)]
 pub(crate) struct LastEnemy(pub(crate) Option<u64>);
 
-/// Stamp [`LastEnemy`] behind the five-conjunct gate `0x49372f`–`0x493778`. Runs before
-/// `ring::update_ring`'s death-clear: a hostile that dies while selected stays remembered.
+/// Stamp [`LastEnemy`] behind the five-conjunct gate `0x49372f`–`0x493778`, on the object
+/// `SetSelection` found and lit (`0x4936f3`-`0x493701`, [`Selection::lit`]): one that streams in
+/// later under the selected guid was never selected, so it is never stamped. Runs before the death
+/// handler's deselect (`super::died`): a hostile that dies while selected stays remembered.
 ///
 /// Deviation: sampled each frame, not stamped in `SetSelection`, so every selection writer is
 /// covered; a selected unit that turns hostile is remembered, where the reference's is not.
@@ -767,7 +774,7 @@ pub(super) fn remember_last_enemy(
     world: RelationWorld,
     mut last: ResMut<LastEnemy>,
 ) {
-    let Some((entity, guid)) = selection.target.zip(selection.guid) else {
+    let Some((entity, guid)) = selection.lit.zip(selection.guid) else {
         return;
     };
     // Conjunct 1: the player object resolves.
@@ -794,47 +801,84 @@ pub(super) fn remember_last_enemy(
     }
 }
 
-/// The ATTACKERSTATEUPDATE self-defence acquire (`0x6259c9`–`0x6259fe`): when we are the victim
-/// and hold no selection, select the attacker, with no counter-attack.
-pub(super) fn auto_acquire_attacker(
+/// What asked [`auto_acquire`] for a unit.
+#[derive(Clone, Copy, Debug)]
+enum Acquire {
+    /// A swing at us (`SMSG_ATTACKERSTATEUPDATE`).
+    Attacker,
+    /// A spell start aimed at us (`SMSG_SPELL_START`).
+    Caster,
+}
+
+/// The two packet acquires, in packet order by their [`crate::creature_anim::PlaySeq`] stamps:
+/// - the ATTACKERSTATEUPDATE self-defence acquire (`0x6259c9`–`0x6259fe`): when we are the victim
+///   and hold no selection, select the attacker, with no counter-attack;
+/// - the spell start's (`0x6e7963`-`0x6e799c`): another unit casting at us, which
+///   [`crate::spell::net::CastAtPlayer`] names, is selected when the active player's object is
+///   held (`0x6e796a`), the caster cannot assist it (`CanAssist 0x6066f0` at `0x6e7973`) and
+///   nothing is selected (`[0xb4e2d8]`, `0x6e7980`). The caster is looked up as a unit
+///   (`0x468460` with mask 8, `0x6e7892`).
+///
+/// Each is `SelectTarget` (`0x6259fe`, `0x6e799c`), whose front may bind the unit to a standing
+/// cursor's cast instead; a packet handler runs in no script, whose gate context passes tag 2.
+pub(super) fn auto_acquire(
     mut swings: MessageReader<SwingMessage>,
+    mut casts: MessageReader<crate::spell::net::CastAtPlayer>,
     self_player: Query<(Entity, &Guid), With<SelfPlayer>>,
     guids: Query<&Guid>,
     // For `IsSelectable`: a `NOT_SELECTABLE` attacker is not acquired.
     stores: Query<&ObjectStore>,
+    relations: RelationWorld,
     mut selection: ResMut<Selection>,
     mut seam: crate::creature_anim::AttackSeam,
     mut front: super::front::SelectFront,
 ) {
-    for s in swings.read() {
-        if selection.target.is_some() {
-            continue;
-        }
-        let Ok((me, my_guid)) = self_player.single() else {
+    let Ok((me, my_guid)) = self_player.single() else {
+        return;
+    };
+    let mut asks: Vec<(u64, Entity, Acquire)> = swings
+        .read()
+        .filter(|s| s.victim == Some(me))
+        .map(|s| (s.seq, s.attacker, Acquire::Attacker))
+        .chain(casts.read().map(|c| (c.seq, c.caster, Acquire::Caster)))
+        .collect();
+    asks.sort_by_key(|&(seq, ..)| seq);
+    for (_, unit, why) in asks {
+        let Ok(guid) = guids.get(unit) else {
             continue;
         };
-        if s.victim != Some(me) {
-            continue;
+        let guid = guid.0;
+        match why {
+            Acquire::Attacker => {
+                // `0x6259e6` tests the selected guid, so a party member selected out of range
+                // keeps the selection.
+                if selection.guid.is_some() {
+                    continue;
+                }
+                debug!("auto-target: attacker {guid:#x} (victim = me, no target)");
+            }
+            Acquire::Caster => {
+                let rel = relations.get();
+                let assists = match (relations.unit(guid), relations.me()) {
+                    (Some(caster), Some(player)) => rel.can_assist(&caster, &player),
+                    _ => continue,
+                };
+                if assists || selection.guid.is_some() {
+                    continue;
+                }
+                debug!("auto-target: caster {guid:#x} (casting at me, no target)");
+            }
         }
-        let Ok(guid) = guids.get(s.attacker) else {
-            continue;
-        };
-        debug!(
-            "auto-target: attacker {:#x} (victim = me, no target)",
-            guid.0
-        );
-        // `0x6259fe` is `SelectTarget`, whose front may bind the attacker to a standing cursor's
-        // cast instead; the packet handler runs in no script, whose gate context passes tag 2.
-        if front.takes(s.attacker, guid.0, seam.slots.targeting()) {
+        if front.takes(unit, guid, seam.slots.targeting()) {
             continue;
         }
         // The selection was empty, so no switch law: selection only.
         commit(
             &mut selection,
             &mut seam,
-            s.attacker,
-            guid.0,
-            stores.get(s.attacker).ok(),
+            Some(unit),
+            guid,
+            stores.get(unit).ok(),
             false,
             Some(my_guid.0),
             false,
@@ -877,7 +921,7 @@ mod tests {
                     commit(
                         &mut selection,
                         &mut seam,
-                        Entity::PLACEHOLDER,
+                        Some(Entity::PLACEHOLDER),
                         guid,
                         store.as_ref(),
                         engaged,
@@ -899,6 +943,7 @@ mod tests {
         world.init_resource::<crate::spell::SpellTargeting>();
         world.init_resource::<crate::ui_cast::CastReports>();
         world.init_resource::<crate::spell::AutoRepeatActive>();
+        world.init_resource::<crate::creature_anim::AttackStopInFlight>();
         world.init_resource::<crate::creature_anim::UnitEdits>();
         world.init_resource::<Messages<crate::creature_anim::SheathRequest>>();
         world.init_resource::<Messages<crate::player::StandStateRequest>>();
@@ -1032,12 +1077,14 @@ mod tests {
             None,
             "the switch un-queued Heroic Strike"
         );
-        // `CancelQueuedCast`'s cancel (`0x6e6f68`): the pop's signal, then `SPELLCAST_STOP`.
+        // `CancelQueuedCast`'s cancel (`0x6e6f68`): the pop's signal, then `SPELLCAST_STOP`; the
+        // re-swing's repeat stop signals `STOP_AUTOREPEAT_SPELL` as the key clears (`0x6ea16a`).
         assert!(matches!(
             world.resource::<crate::ui_cast::CastReports>().0[..],
             [
                 crate::ui_cast::CastReport::Changed,
-                crate::ui_cast::CastReport::Bar(crate::ui_cast::CastBarEdge::Stop)
+                crate::ui_cast::CastReport::Bar(crate::ui_cast::CastBarEdge::Stop),
+                crate::ui_cast::CastReport::AutoRepeat(false)
             ]
         ));
         assert_eq!(
@@ -1509,10 +1556,12 @@ mod tests {
             ]))
             .id();
 
+        // As `SetSelection` stores the guid and lights the object it found (`0x493701`).
         let select = |world: &mut World, target: Option<(Entity, u64)>| {
             let mut sel = world.resource_mut::<Selection>();
             sel.target = target.map(|(e, _)| e);
             sel.guid = target.map(|(_, g)| g);
+            sel.lit = sel.target;
             world
                 .run_system_once(remember_last_enemy)
                 .expect("the sampler runs as a one-shot system");

@@ -17,6 +17,7 @@ mod by_name;
 pub(crate) mod click;
 // `pub(crate)` for the hover inspector, which runs the cursor's `cursor_mode::go_highlightable`.
 pub(crate) mod cursor_mode;
+mod died;
 mod flash;
 mod front;
 #[cfg(test)]
@@ -45,6 +46,9 @@ pub(crate) mod ring;
 mod scan;
 mod script;
 pub(crate) use script::ScriptSelect;
+mod track;
+#[cfg(test)]
+mod unheld_tests;
 
 pub(crate) use cursor_mode::{
     corpse_mouseover_eligible, CursorKind, WorldCursor, GO_TYPE_GENERIC, SERVICE_RANGE_SQ,
@@ -82,13 +86,20 @@ pub(crate) use ring::{selection_variant, Factions, RingVariant};
 pub use click::Interact;
 pub(crate) use click::{clear_selection_on_world_teardown, deselect_on_ui_shutdown, DeselectGuid};
 
-/// Our target, set the instant we click, as the 1.12 client does without waiting for the server,
-/// and cleared on deselect or when it streams out. `CMSG_SET_SELECTION` carries the guid, which the
-/// server records in our `UNIT_FIELD_TARGET`.
+/// Our target, set the instant we click, as the 1.12 client does without waiting for the server.
+/// The selection is the guid `[0xb4e2d8]`: `SetSelection 0x493540` stores it whether or not the
+/// object manager holds its object (`0x4935bf` → `0x493605`), and the client reads the object by
+/// that guid where it needs one. `CMSG_SET_SELECTION` carries the guid, which the server records in
+/// our `UNIT_FIELD_TARGET`. [`track::follow_selection_object`] keeps [`Self::target`] on the guid's
+/// object and ends the selection where the client's teardowns do.
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Selection {
+    /// The object [`Self::guid`] names while the object manager holds it.
     pub(crate) target: Option<Entity>,
     pub(crate) guid: Option<u64>,
+    /// The object `SetSelection` lit as the target (`SetLight` bit 0, `0x493701`) and the teardown
+    /// unlights (`0x4939a7`): an object that streams in after the select is not lit.
+    pub(crate) lit: Option<Entity>,
     /// The last-target pair `[0xb4e2e0]` that `TargetLastTarget` reads: `SetSelection` stamps the
     /// outgoing selection, none included, on every change it makes, a select or a deselect
     /// (`0x49361d`-`0x493628`); a teardown clear (`0x493910` alone) leaves it.
@@ -336,7 +347,7 @@ impl Plugin for TargetPlugin {
                         // `UiInput`, before `WorldStage::Input`, and reads the last re-place's, as
                         // the client's bit does.
                         crate::ui_merchant::end_repair_mode_on_right_press
-                            .after(crate::player::publish_player_outdoors),
+                            .after(crate::player::publish_caster_outdoors),
                     ),
                     // Overwrites the classifier's verdict while the targeting cursor is up, as the
                     // reference's dispatcher runs this branch before the object classifier.
@@ -383,19 +394,32 @@ impl Plugin for TargetPlugin {
                             .after(crate::ui_follow::drain_follow),
                     )
                         .chain(),
-                    scan::auto_acquire_attacker,
+                    scan::auto_acquire,
                     // The melee probe's press, the player's Attack; the TAB keys and ATTACKTARGET
                     // run their bodies' `TargetNearestEnemy` and `AttackTarget` as script calls.
                     crate::ui_action::attack_nearest_probe,
                     flash::drive_flash,
-                    // The last-enemy stamp before the ring's death-clear, so a hostile that dies
-                    // selected is still remembered (the reference's `TargetLastEnemy` has no
-                    // liveness gate).
-                    (scan::remember_last_enemy, ring::update_ring).chain(),
+                    // The last-enemy stamp before the death handler's deselect, so a hostile that
+                    // dies selected is still remembered (the reference's `TargetLastEnemy` has no
+                    // liveness gate); the ring after both, off the frame's final selection.
+                    (
+                        scan::remember_last_enemy,
+                        died::on_unit_died,
+                        ring::update_ring,
+                    )
+                        .chain(),
                 )
                     .chain()
                     .in_set(TargetUpdate)
                     .after(WorldStage::Input),
+            )
+            // The selection's object, as the objects that streamed in and out applied and the
+            // active player is tagged, before any reader of the frame.
+            .add_systems(
+                Update,
+                track::follow_selection_object
+                    .after(WorldStage::Net)
+                    .before(WorldStage::Input),
             )
             // PostUpdate: the brighten sets MeshTag bit 31 after every Update writer that
             // overwrites the whole tag.

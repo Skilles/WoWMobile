@@ -84,11 +84,16 @@ fn hermetic_addon(
 /// The world after `Startup` ([`super::setup_script`]): the stock glue VM at the login screen.
 fn booted_world() -> World {
     let mut world = World::new();
+    boot(&mut world);
+    world
+}
+
+/// `Startup`'s part of [`booted_world`], on `world`.
+fn boot(world: &mut World) {
     world.init_resource::<super::AddOnIdentity>();
     world.init_resource::<crate::minimap::MinimapZoom>();
     world.init_resource::<super::ReloadUiPending>();
-    super::setup_script(&mut world);
-    world
+    super::setup_script(world);
 }
 
 /// Queue and run a `ReloadUI()` as the app does; [`super::run_pending_reload`] checks the client
@@ -466,8 +471,7 @@ fn sweep_lock_legs(world: &mut World) {
     let (tx, _rx) = crossbeam_channel::unbounded();
     world.insert_resource(crate::net::NetCommands(tx));
     world.init_resource::<crate::net::GuidIndex>();
-    world.init_resource::<crate::ui_loot::LootLatch>();
-    world.init_resource::<Messages<crate::target::DeselectGuid>>();
+    crate::ui_loot::seat_loot_steps(world);
     world.init_resource::<crate::ui_mail::MailOpen>();
     world.init_resource::<crate::ui_auction::AuctionOpen>();
     world.init_resource::<crate::ui_merchant::MerchantOpen>();
@@ -1811,19 +1815,25 @@ BindProbeSet = SetBinding(\"J\", \"TOGGLEWORLDMAP\")
 
 /// With an empty channel catalog, `JoinChannelByName("General")` would join a custom channel of
 /// that name on the server. Seeded with no zone, the call matches the built-in row and does
-/// nothing, the reference's answer while there is no zone text.
+/// nothing, the reference's answer while there is no zone text; the custom channel joined beside
+/// it shows the call host was lent.
 #[test]
 fn an_addon_that_joins_general_at_file_scope_puts_nothing_on_the_wire() {
     const TOC: &str = "\
 ## Interface: 11200
 JoinProbe.lua
 ";
-    const LUA: &str = "JoinChannelByName(\"General\")\n";
+    const LUA: &str = "JoinChannelByName(\"General\")\nJoinChannelByName(\"JoinProbe\")\n";
     let _l = ENV_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (tmp, _c, _h) = hermetic_addon("joinprobe", "JoinProbe", TOC, LUA);
-    let mut world = booted_world();
+    // The whole client, whose call host the load lends.
+    let mut app = crate::game_plugins::schedule_tests::headless_client();
+    let world = app.world_mut();
+    boot(world);
+    let (tx, wire) = crossbeam_channel::unbounded();
+    world.insert_resource(crate::net::NetCommands(tx));
     world.insert_resource(crate::ui_chat::ChannelState {
         channels: benilla_formats::ChatChannelsCatalog::from_rows(vec![
             // Row 1 as `ChatChannels.dbc` has it: auto-joined, its `%s` the zone's name.
@@ -1838,19 +1848,23 @@ JoinProbe.lua
         ..Default::default()
     });
 
-    log_in_as(&mut world, "Onewarrior", 1);
+    log_in_as(world, "Onewarrior", 1);
 
-    let queued = world
-        .get_non_send_resource_mut::<benilla_ui::script::UiScript>()
-        .expect("VM")
-        .take_channel_commands();
-    assert!(
-        queued.is_empty(),
-        "a built-in shortcut with no zone text yet is a no-op, not a custom channel on the \
-         server — queued {queued:?}"
+    // A join goes out inside its call (`0x49ee02`).
+    let joins: Vec<String> = wire
+        .try_iter()
+        .filter_map(|c| match c {
+            crate::net::ClientCommand::JoinChannel { name, .. } => Some(name),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        joins,
+        ["JoinProbe"],
+        "a built-in shortcut with no zone text yet is a no-op, not a custom channel on the server"
     );
 
-    drop(world);
+    drop(app);
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -2118,6 +2132,56 @@ fn player_login_fires_from_the_world_entry_with_the_player_seated() {
         "LOGIN:1:17:1234 PEW PEW ",
         "a worldport re-fires PLAYER_ENTERING_WORLD and not PLAYER_LOGIN"
     );
+
+    drop(app);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// The load runs its files and handlers with a call host lent, built off the world, so a call one
+/// makes applies inside its verb, as the reference's do inside `UI_Init` (`0x48fbf0`): a file's
+/// `TargetUnit("player")` (`0x4899d0`, through `SetSelection 0x493540`) has committed by its next
+/// line.
+#[test]
+fn a_call_a_file_makes_at_the_load_applies_inside_its_verb() {
+    use crate::net::{Guid, GuidIndex, ObjectStore, SelfGuid, SelfPlayer};
+    const ME: u64 = 0x10;
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (tmp, _c, _h) = hermetic_addon(
+        "loadcall",
+        "LoadCall",
+        "## Interface: 11200\nLoadCall.lua\n",
+        "TargetUnit(\"player\") LoadCallSeen = UnitExists(\"target\")",
+    );
+    let mut app = crate::game_plugins::schedule_tests::headless_client();
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    app.insert_resource(crate::net::NetCommands(tx));
+    app.insert_resource(State::new(crate::client_state::ClientState::InWorld));
+    app.insert_resource(roster_named("Loadcall", ME));
+    let world = app.world_mut();
+    let me = world
+        .spawn((
+            SelfPlayer,
+            Guid(ME),
+            Transform::default(),
+            GlobalTransform::default(),
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (2, 0x19),
+                (22, 100),
+                (28, 100),
+            ])),
+        ))
+        .id();
+    world.resource_mut::<GuidIndex>().0.insert(ME, me);
+    world.resource_mut::<SelfGuid>().0 = Some(ME);
+    super::load_ingame_ui_on_world_entry(world);
+    let seen = world
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .eval::<Option<i64>>("return LoadCallSeen")
+        .unwrap();
+    assert_eq!(seen, Some(1), "the file reads the target it selected");
+    assert_eq!(world.resource::<crate::target::Selection>().guid, Some(ME));
 
     drop(app);
     let _ = std::fs::remove_dir_all(&tmp);

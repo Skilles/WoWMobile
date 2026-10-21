@@ -5,11 +5,11 @@ use crate::widget::{FrameHandle, RegionHandle, WidgetArena};
 
 use super::{
     auction, backdrop, bank, bind_confirm, camera_view, char_stats, chat_window, colorselect,
-    container, craft, cursor, death, duel, follow, gossip, guild, inspect, item_text, loot,
-    loot_roll, macros, mail, merchant, parse_unit_token, party, petition, pvp, quest, quest_log,
-    reputation, session, simplehtml, skills, slider, social, spellbook, stable, taxi, trade,
-    tradeskill, trainer, weapon_enchant, ActionSlot, AuraState, FontObject, ItemTemplateView,
-    MusicRequest, PlayerReqState, RegionData, ScriptValue, SoundRequest, UnitState, UnitTokenParse,
+    container, craft, cursor, death, duel, follow, gossip, guild, item_text, loot, loot_roll,
+    macros, mail, merchant, parse_unit_token, party, petition, pvp, quest, quest_log, reputation,
+    session, simplehtml, skills, slider, social, spellbook, stable, taxi, trade, tradeskill,
+    trainer, weapon_enchant, ActionSlot, AuraState, FontObject, ItemTemplateView, MusicRequest,
+    PlayerReqState, RegionData, ScriptValue, SoundRequest, UnitBase, UnitState, UnitTokenParse,
 };
 
 // ── The Rust-side model ──
@@ -418,15 +418,18 @@ pub(crate) struct Model {
     pub(crate) cancel_aura_requests: Vec<u32>,
     /// The player's active tracking aura, behind `GetTrackingTexture`.
     pub(crate) tracking: Option<super::aura::TrackingState>,
-    /// The calls that touch the selection, the cast or the targeting cursor made while the host
-    /// was out, in call order, for it to apply as soon as it is back.
-    pub(crate) script_calls: Vec<super::calls::QueuedCall>,
+    /// What waits for the host, in the order made: the calls that touch the selection, the cast
+    /// or the targeting cursor made while it was out, and the handlers an engine step fired then
+    /// ([`super::host::holding`]), for it to run as soon as it is back.
+    pub(crate) script_calls: Vec<super::calls::Waiting>,
     /// How many drains of [`Self::script_calls`] are running, each inside a call the one outside
     /// it applied ([`super::calls::submit`]).
     pub(crate) call_depth: u8,
     /// A harness's VM keeps the calls made with no host lent here
     /// ([`super::UiScript::keep_calls`]); `None` refuses them.
     pub(crate) kept_calls: Option<Vec<super::ScriptCall>>,
+    /// What the host raised in its calls' verbs ([`super::UiScript::raise_in_call`]).
+    pub(crate) call_raises: super::calls::CallRaises,
     /// The binding functions' queue and mouselook state.
     pub(crate) input: super::input_verbs::InputState,
     /// The selection change a script call made and the input events it ran under, for the event
@@ -437,8 +440,8 @@ pub(crate) struct Model {
     /// `DropItemOnUnit` tokens (`0x48d960`), gated by the app; a refusal silently keeps the item.
     pub(crate) drop_item_on_unit: Vec<String>,
 
-    /// Channels the server confirmed, in join order: the numbers `GetChannelName` answers.
-    pub(crate) joined_channels: Vec<Option<String>>,
+    /// The joined channels, in join order: the numbers `GetChannelName` answers.
+    pub(crate) joined_channels: Vec<Option<super::channel::JoinedChannel>>,
     /// The party or raid roster the app pushes; the default is not in a group.
     pub(crate) party: party::PartyState,
     /// Party and loot-method calls (`AcceptGroup`, `InviteToParty`, `SetLootMethod`, …) queued.
@@ -495,7 +498,6 @@ pub(crate) struct Model {
     /// `Languages.dbc`'s `(ID, Name_lang)` rows in file order, whatever the character knows.
     pub(crate) language_table: Vec<(u32, String)>,
     pub(crate) zone_channel_catalog: Vec<super::channel::ZoneChannelRow>,
-    pub(crate) channel_commands: Vec<super::channel::ChannelCommand>,
     /// The recruitment auto-join latch `[0x843608]`: 0 `STANDARD`, 1 `AUTO` (`0x49ea70` maps any
     /// other word to 1). Boots at 1, as the reference writes `AUTO` for an untouched option.
     pub(crate) guild_recruitment_mode: u8,
@@ -504,16 +506,8 @@ pub(crate) struct Model {
     pub(crate) guild_recruitment_cascade: bool,
     /// What the cascade `0x49ea90` would do now, pushed by the app.
     pub(crate) guild_recruitment_plan: super::channel::RecruitmentPlan,
-    /// The cascade's joins and leaves since the last drain, for the app's wire and slot halves.
-    pub(crate) guild_recruitment_runs: Vec<super::channel::RecruitmentRun>,
     /// Lua changed the recruitment mode: the chat cache's dirty signal.
     pub(crate) guild_recruitment_changed: bool,
-    /// `DoEmote` calls queued.
-    pub(crate) emote_requests: Vec<super::chat_misc::EmoteRequest>,
-    /// `RandomRoll` calls queued.
-    pub(crate) roll_requests: Vec<(u32, u32)>,
-    /// `UninviteByName` calls queued.
-    pub(crate) uninvite_requests: Vec<String>,
     /// `ConsoleExec` lines that were not CVar writes.
     pub(crate) console_lines: Vec<String>,
     /// `LoggingChat` and `LoggingCombat`'s flags, and their change cue.
@@ -763,7 +757,7 @@ pub(crate) struct Model {
     pub(crate) container_cooldowns: HashMap<(i64, u32), (f64, f64, bool)>,
     /// The same triple for a worn item, by live-API slot id (1..=19); the cooldown query is keyed
     /// by the item's entry (`0x6e2ed0`), so a worn trinket answers as a bagged one does. Kept off
-    /// the doll snapshot, whose change fires `UNIT_INVENTORY_CHANGED`.
+    /// the doll snapshot, which is pushed on change.
     pub(crate) worn_cooldowns: HashMap<usize, (f64, f64, bool)>,
     /// The entries whose record `GetContainerItemCooldown`, `SetBagItem` or `SetInventoryItem`
     /// found missing, which their query asks with the callback `0x6e2f70`
@@ -786,10 +780,6 @@ pub(crate) struct Model {
     pub(crate) container_repairs: Vec<(i64, u32)>,
     /// Targeting wants an item (`0x6e6330`): a bag or paper-doll click becomes a pick.
     pub(crate) item_pick_armed: bool,
-    /// Picked `(bag, slot)`s; a paper-doll click is `EQUIPMENT_BAG` and its 1-based inventory slot.
-    pub(crate) item_picks: Vec<cursor::ItemPick>,
-    /// `BindEnchant()` and `ReplaceEnchant()`, the enchant popups' answers.
-    pub(crate) enchant_confirms: Vec<cursor::EnchantAnswer>,
     /// `DeleteCursorItem`'s `(bag, slot, count)`, 0 for the whole stack, as `CMSG_DESTROYITEM`.
     pub(crate) container_destroys: Vec<(i64, u32, u32)>,
     /// The wrapping paper a right-click armed (`0x5edea0`: lock it, cursor mode 2, no packet). Not
@@ -938,18 +928,11 @@ pub(crate) struct Model {
     pub(crate) pending_equip_answers: Vec<bind_confirm::PendingEquipAnswer>,
     pub(crate) bind_on_use_confirms: Vec<bool>,
 
-    /// The open loot, the row clicks and whether `CloseLoot` ran. A click is the reference's take
-    /// `0x4c2790` with flag 0, raising `LOOT_BIND` for a bind-on-pickup row (a `LootButton`'s own
-    /// click, `0x4c1820`); `LootSlot` passes 1 (`0x4c2e70`), taking it after the confirm.
+    /// The open loot as the app pushed it; the verbs over it are script calls
+    /// ([`loot::LootCall`]).
     pub(crate) loot: Option<loot::LootState>,
-    pub(crate) loot_picks: Vec<u32>,
-    /// `LootSlot(slot)` rows, 1-based, apart from clicks for the reference's pending-slot gate.
-    pub(crate) loot_confirms: Vec<u32>,
-    /// The first `CloseLoot` since the last drain, with its `failed` flag; a later one in the
-    /// same frame finds the loot already released.
-    pub(crate) loot_close: Option<bool>,
-    /// `GiveMasterLoot(slot, candidateIndex)`, both 1-based display positions the app translates.
-    pub(crate) loot_master_gives: Vec<(u32, u32)>,
+    /// The loot type cell (`0xb71bbc`), which outlives the window.
+    pub(crate) loot_type: u8,
 
     /// The open group-loot rolls, and the `RollOnLoot` `(roll_id, roll_type)` votes.
     pub(crate) loot_rolls: loot_roll::LootRollsState,
@@ -995,8 +978,9 @@ pub(crate) struct Model {
     /// `HasNewMail()` (`0x4afea0`), from `MSG_QUERY_NEXT_MAIL_TIME` and `SMSG_RECEIVED_MAIL`.
     pub(crate) has_new_mail: bool,
 
-    /// The open auction house and the auction calls. `auction_selected` is each list's selected
-    /// auction id, 0 for none (`0x4cfda0`/`0x4cfec0`); `auction_can_query` is the 5 s throttle.
+    /// The auction house's lists and session as the app last pushed them, `None` until this VM's
+    /// first push, and the auction calls. `auction_selected` is each list's selected auction id, 0
+    /// for none (`0x4cfda0`/`0x4cfec0`); `auction_can_query` is the 5 s throttle.
     pub(crate) auction: Option<auction::AuctionState>,
     /// The Browse tab's class tree, pushed once per login.
     pub(crate) auction_item_classes: Vec<auction::AuctionCategory>,
@@ -1186,8 +1170,10 @@ pub(crate) struct Model {
 
     /// The paper doll's combat stats, `None` until the first push.
     pub(crate) player_combat_stats: Option<char_stats::UnitCombatStats>,
-    /// The pet's combat stats, which the reference's pet sheet reads as `UnitStat("pet", …)`.
-    pub(crate) pet_combat_stats: Option<char_stats::UnitCombatStats>,
+    /// The ammunition entry each `GetInventoryItemTexture` or `GetInventoryItemQuality` call on
+    /// the ammo slot looked up and missed, one callback `0x4c84f0` per call (`0x4c83bc`,
+    /// `0x4c89cf`), for the host to register with the item cache.
+    pub(crate) ammo_record_asks: Vec<u32>,
     pub(crate) inventory_slots: char_stats::InventorySlots,
     /// The six bank-bag slots, ids 64..=69, fed from the player descriptor's guids.
     pub(crate) bank_bag_slots: char_stats::BankBagSlots,
@@ -1198,8 +1184,10 @@ pub(crate) struct Model {
     /// Main- and off-hand temporary enchants in `GetWeaponEnchantInfo`'s order, pushed each frame.
     pub(crate) weapon_enchants: [Option<weapon_enchant::WeaponEnchant>; 2],
 
-    /// The inspected unit's gear, from its public `PLAYER_VISIBLE_ITEM_*` fields.
-    pub(crate) inspect: Option<inspect::InspectView>,
+    /// Another player's visible items by guid, from its public `PLAYER_VISIBLE_ITEM_*` fields,
+    /// slots 1..=19 as the doll numbers them: the slot getters' other-unit leg (`0x4c8420` →
+    /// `0x5f0d60`).
+    pub(crate) visible_equipment: HashMap<u64, char_stats::InventorySlots>,
     /// `NotifyInspect` unit tokens, sent as `CMSG_INSPECT`.
     pub(crate) inspect_notifies: Vec<String>,
     /// `ClearInspectPlayer` ran; the app drops its inspect target.
@@ -1290,10 +1278,6 @@ pub(crate) struct Model {
     /// The world points our own `Minimap:PingLocation` calls pinged, for the host's wire send
     /// (`0x1d5`, `0x4eef72`) and its process-wide copy of the ping.
     pub(crate) minimap_pings_sent: Vec<(f32, f32)>,
-    /// `SendChatMessage` lines, apart from chat-box input, whose drain runs the slash grammar.
-    pub(crate) chat_sends: Vec<super::chat_send::ChatSend>,
-    /// `SendAddonMessage` broadcasts: `LANG_ADDON`, four distributions, `prefix` TAB `message`.
-    pub(crate) addon_sends: Vec<super::addon_message::AddonSend>,
     /// `RequestTimePlayed()` calls, one empty `CMSG_PLAYED_TIME` each.
     pub(crate) played_time_asks: u32,
     /// `OpeningCinematic()` calls, one empty `CMSG_OPENING_CINEMATIC` each.
@@ -1406,7 +1390,8 @@ impl Model {
     }
 
     /// The state of the unit `token` names, as the `Unit*` getters read it: the snapshot the app
-    /// pushed under the token, else, for a token with a `target` hop, the chain's end.
+    /// pushed under the token, else, for a token with a `target` hop or for `target` itself, what
+    /// the getters read for the guid it resolves to.
     pub(crate) fn unit(&self, token: &str) -> Option<&UnitState> {
         self.pushed_unit(token).or_else(|| self.chained_unit(token))
     }
@@ -1422,16 +1407,18 @@ impl Model {
         }
     }
 
-    /// The unit a token with a `target` hop and no push of its own names: the resolver's guid
-    /// (`0x515970`, which the getters call before their own object lookup, `0x468460`), then what
-    /// each getter reads for that guid. A held unit's snapshot first; with no object, the group
-    /// row naming the guid, whose own token's push carries its records (`0x496400`, `0x496420`)
-    /// and the roster's `UnitExists` (`0x491900`); off the roster, the app's no-object entry, a
-    /// name from the name cache (`0x5171eb`) and nothing more. A token without a hop is the app's
-    /// to push, base by base, and reads nothing here.
+    /// The unit a token with a `target` hop and no push of its own names, or `target` itself while
+    /// the selection's object is not held (the app pushes `"target"` for a held one): the
+    /// resolver's guid (`0x515970`, which the getters call before their own object lookup,
+    /// `0x468460`), then what each getter reads for that guid. A held unit's snapshot first; with
+    /// no object, the group row naming the guid, whose own token's push carries its records
+    /// (`0x496400`, `0x496420`) and the roster's `UnitExists` (`0x491900`), so a party member out
+    /// of range shows on the target frame; off the roster, the app's no-object entry, a name from
+    /// the name cache (`0x5171eb`) and nothing more. Any other token without a hop is the app's to
+    /// push, base by base, and reads nothing here.
     fn chained_unit(&self, token: &str) -> Option<&UnitState> {
         match parse_unit_token(token) {
-            UnitTokenParse::Unit { base, hops } if hops > 0 => {
+            UnitTokenParse::Unit { base, hops } if hops > 0 || base == UnitBase::Target => {
                 let guid = self.unit_guids.resolve_unit(base, hops)?;
                 match self.units_by_guid.get(&guid) {
                     Some(held) if held.has_object => Some(held),
@@ -1558,6 +1545,7 @@ impl Model {
             script_calls: Vec::new(),
             call_depth: 0,
             kept_calls: None,
+            call_raises: Default::default(),
             input: Default::default(),
             protected: Default::default(),
             selection_cause: None,
@@ -1592,15 +1580,10 @@ impl Model {
             known_languages: Vec::new(),
             language_table: Vec::new(),
             zone_channel_catalog: Vec::new(),
-            channel_commands: Vec::new(),
             guild_recruitment_mode: 1,
             guild_recruitment_cascade: false,
             guild_recruitment_plan: Default::default(),
-            guild_recruitment_runs: Vec::new(),
             guild_recruitment_changed: false,
-            emote_requests: Vec::new(),
-            roll_requests: Vec::new(),
-            uninvite_requests: Vec::new(),
             console_lines: Vec::new(),
             logging_chat: false,
             logging_combat: false,
@@ -1717,8 +1700,6 @@ impl Model {
             container_moves: Vec::new(),
             container_repairs: Vec::new(),
             item_pick_armed: false,
-            item_picks: Vec::new(),
-            enchant_confirms: Vec::new(),
             container_destroys: Vec::new(),
             pending_wrap: None,
             container_wraps: Vec::new(),
@@ -1785,12 +1766,9 @@ impl Model {
             craft_selection: 0,
             craft_close: false,
             loot: None,
+            loot_type: 0,
             pending_equip_answers: Vec::new(),
             bind_on_use_confirms: Vec::new(),
-            loot_picks: Vec::new(),
-            loot_confirms: Vec::new(),
-            loot_close: None,
-            loot_master_gives: Vec::new(),
             loot_rolls: loot_roll::LootRollsState::default(),
             loot_roll_votes: Vec::new(),
             item_text: None,
@@ -1899,8 +1877,6 @@ impl Model {
             cursor_pos: (0.0, 0.0),
             minimap: crate::widget::MinimapStatics::default(),
             minimap_pings_sent: Vec::new(),
-            chat_sends: Vec::new(),
-            addon_sends: Vec::new(),
             played_time_asks: 0,
             opening_cinematic_asks: 0,
             screenshot_asks: 0,
@@ -1941,13 +1917,13 @@ impl Model {
             .into_iter()
             .collect(),
             player_combat_stats: None,
-            pet_combat_stats: None,
+            ammo_record_asks: Vec::new(),
             inventory_slots: Default::default(),
             bank_bag_slots: Default::default(),
             inventory_alerts: [0; 12],
             inventory_repairs: Vec::new(),
             weapon_enchants: [None; 2],
-            inspect: None,
+            visible_equipment: HashMap::new(),
             inspect_notifies: Vec::new(),
             inspect_clear: false,
             dressup_intents: Vec::new(),
