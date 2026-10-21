@@ -1,18 +1,19 @@
 //! The mobile client's power use: a frame-rate limit (`mobileMaxFps`), so a phone renders no more
 //! frames than its player asked for, and the device's thermal state, which the remote console
-//! reports. The limit holds the main loop with a sleep, never a spin: a spinning core is the heat
-//! the limit is for.
+//! reports. Below the display's rate the limit is the event loop's own timed wait (bevy's reactive
+//! update mode, woken by nothing else), so the main thread sleeps in the run loop between frames;
+//! at the display's rate the display paces the loop, as it does any iOS app.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bevy::prelude::*;
+use bevy::winit::{UpdateMode, WinitSettings};
 
 /// The frame-rate limit's CVar.
 pub(crate) const CVAR_MAX_FPS: &str = "mobileMaxFps";
 
-/// The limits the Graphics page offers; 120 needs a ProMotion display, elsewhere the display's
-/// own rate holds it lower.
-pub(crate) const MAX_FPS_CHOICES: [u32; 4] = [30, 40, 60, 120];
+/// The limits the Graphics page offers; the last is the display's own rate, no limit.
+pub(crate) const MAX_FPS_CHOICES: [u32; 3] = [30, 40, 60];
 
 /// The frame period `mobileMaxFps` asks for; `None` leaves the display's rate alone.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,9 +25,9 @@ impl Default for FrameCap {
     }
 }
 
-/// The period for `fps`, 0 or past the fastest choice meaning no limit.
+/// The period for `fps`; 0, or the fastest choice and past it, mean no limit.
 fn period(fps: u32) -> Option<Duration> {
-    (fps > 0 && fps < MAX_FPS_CHOICES[3]).then(|| Duration::from_secs_f64(1.0 / f64::from(fps)))
+    (fps > 0 && fps < MAX_FPS_CHOICES[2]).then(|| Duration::from_secs_f64(1.0 / f64::from(fps)))
 }
 
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut cap: ResMut<FrameCap>) {
@@ -40,16 +41,29 @@ pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut cap: ResMut<FrameCa
     }
 }
 
-/// Sleep out the rest of the frame the limit allows. The last millisecond is not spun: a frame a
-/// timer tick late costs nothing a phone's player sees, and a spin is heat.
-pub(crate) fn cap_frame_rate(cap: Res<FrameCap>, mut last: Local<Option<Instant>>) {
-    if let Some(period) = cap.0 {
-        let wait = crate::video::pace_wait(*last, Instant::now(), period);
-        if !wait.is_zero() {
-            std::thread::sleep(wait);
-        }
+/// The focused update mode the limit asks for. No event wakes a limited loop early: a touch waits
+/// for the next frame, as it would at the display's rate, and a stream of touches cannot raise
+/// the rate.
+fn update_mode(cap: FrameCap) -> UpdateMode {
+    match cap.0 {
+        Some(wait) => UpdateMode::Reactive {
+            wait,
+            react_to_device_events: false,
+            react_to_user_events: false,
+            react_to_window_events: false,
+        },
+        None => UpdateMode::Continuous,
     }
-    *last = Some(Instant::now());
+}
+
+/// Put the limit into the event loop's settings when it changes.
+pub(crate) fn apply_frame_cap(cap: Res<FrameCap>, settings: Option<ResMut<WinitSettings>>) {
+    if !cap.is_changed() {
+        return;
+    }
+    if let Some(mut settings) = settings {
+        settings.focused_mode = update_mode(*cap);
+    }
 }
 
 /// The device's thermal state as iOS reports it (`NSProcessInfoThermalState`): nominal, fair,
@@ -78,10 +92,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_fastest_choice_and_zero_mean_no_limit() {
+    fn the_display_rate_and_zero_mean_no_limit() {
+        assert_eq!(period(60), None);
         assert_eq!(period(120), None);
         assert_eq!(period(0), None);
         assert_eq!(period(30), Some(Duration::from_secs_f64(1.0 / 30.0)));
-        assert_eq!(FrameCap::default().0, period(60));
+        assert_eq!(FrameCap::default().0, None);
+        assert_eq!(update_mode(FrameCap(None)), UpdateMode::Continuous);
+        assert!(matches!(
+            update_mode(FrameCap(period(30))),
+            UpdateMode::Reactive {
+                react_to_window_events: false,
+                ..
+            }
+        ));
     }
 }

@@ -44,7 +44,7 @@ impl bevy::app::Plugin for MobilePlugin {
             )
             .init_resource::<power::FrameCap>()
             .add_observer(power::on_cvar)
-            .add_systems(Last, power::cap_frame_rate)
+            .add_systems(Last, power::apply_frame_cap)
             .add_observer(launcher::on_cvar)
             .add_systems(
                 Update,

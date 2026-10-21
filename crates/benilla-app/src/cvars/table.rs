@@ -832,7 +832,7 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // The mobile fork's settings (`crate::mobile`), its options page's rows. 1.12 has no touch
     // screen, controller or launcher, so none has a reference counterpart.
     ours("mobileTouchControls", "1", MOBILE),
-    // [`crate::mobile::power::FrameCap`]: the Graphics page's Frame Rate Limit, 120 for none.
+    // [`crate::mobile::power::FrameCap`]: the Graphics page's Frame Rate Limit, 60 for none.
     ours("mobileMaxFps", "60", MOBILE),
     ours("mobileView", "combat", MOBILE),
     ours("mobileLookSpeed", "1", MOBILE),

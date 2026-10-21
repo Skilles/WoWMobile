@@ -266,7 +266,7 @@ pub(crate) fn refresh_period(
 }
 
 /// How much longer the frame that began at `last` must wait to last a whole `period`.
-pub(crate) fn pace_wait(last: Option<Instant>, now: Instant, period: Duration) -> Duration {
+fn pace_wait(last: Option<Instant>, now: Instant, period: Duration) -> Duration {
     last.map_or(Duration::ZERO, |last| {
         period.saturating_sub(now.saturating_duration_since(last))
     })

@@ -25,9 +25,9 @@
             .. "WoWMobile's remote console, for debugging. Leave it off otherwise."
         BENILLA_MOBILE_TIP_DESKTOP = "Not used on this device."
         BENILLA_MOBILE_TIP_MAX_FPS = "The most frames a second the game draws. Fewer frames keep "
-            .. "the phone cooler and the battery fuller; 120 needs a ProMotion display."
+            .. "the phone cooler and the battery fuller."
         BENILLA_MOBILE_TIP_PRESETS = "Set every row above at once: Battery Saver for long play "
-            .. "on a warm phone, Smooth for 120 frames a second on a ProMotion display."
+            .. "on a warm phone, Quality for the sharpest picture."
 
         -- The Graphics page's own rows: the frame-rate limit, below Render Scale.
         table.insert(BENILLA_OPTIONS_PAGE_ROWS.Graphics, "RowFrameRate")
@@ -40,8 +40,6 @@
                 WorldDetail = "1", spellEffectLevel = "1", weatherDensity = "1" },
             quality = { mobileMaxFps = "60", renderScale = "1", farclip = "577",
                 WorldDetail = "2", spellEffectLevel = "2", weatherDensity = "3" },
-            smooth = { mobileMaxFps = "120", renderScale = "0.7", farclip = "377",
-                WorldDetail = "1", spellEffectLevel = "1", weatherDensity = "1" },
         }
 
         -- Written outright, as the page's Defaults button writes, staged edits dropped.
@@ -324,7 +322,6 @@
                 { text = "30 fps", value = "30" },
                 { text = "40 fps", value = "40" },
                 { text = "60 fps", value = "60" },
-                { text = "120 fps", value = "120" },
             })
         </OnLoad></Scripts>
     </Frame>
@@ -363,11 +360,6 @@
                 <Size><AbsDimension x="90" y="24"/></Size>
                 <Anchors><Anchor point="LEFT" relativeTo="$parentBalanced" relativePoint="RIGHT"><Offset><AbsDimension x="6" y="0"/></Offset></Anchor></Anchors>
                 <Scripts><OnClick>BenillaMobileGraphics_ApplyPreset("quality")</OnClick></Scripts>
-            </Button>
-            <Button name="$parentSmooth" inherits="UIPanelButtonTemplate" text="Smooth">
-                <Size><AbsDimension x="90" y="24"/></Size>
-                <Anchors><Anchor point="LEFT" relativeTo="$parentQuality" relativePoint="RIGHT"><Offset><AbsDimension x="6" y="0"/></Offset></Anchor></Anchors>
-                <Scripts><OnClick>BenillaMobileGraphics_ApplyPreset("smooth")</OnClick></Scripts>
             </Button>
         </Frames>
     </Frame>
