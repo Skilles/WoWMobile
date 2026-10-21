@@ -50,7 +50,7 @@
         -- ── Elements: what the editor moves. Positions are a centre as a share of the screen,
         -- kept 60 points in from the side edges, clear of the camera housing in either landscape ──
         BENILLA_MOBILE_ELEMENTS = {
-            { id = "ring", frame = "BenillaMobileRing", label = "Jump Ring", x = 0.87, y = 0.2, scale = 1 },
+            { id = "ring", frame = "BenillaMobileRing", label = "Jump Ring", x = 0.85, y = 0.23, scale = 1.25 },
             { id = "menu", frame = "BenillaMobileMenuButton", label = "Menu", x = 0.935, y = 0.64, scale = 1 },
             { id = "button1", frame = "BenillaMobileButton1", label = "Button 1", x = 0.935, y = 0.52, scale = 1, action = "target" },
             { id = "button2", frame = "BenillaMobileButton2", label = "Button 2", x = 0.935, y = 0.40, scale = 1, action = "chat" },
@@ -666,6 +666,7 @@
 
     <!-- The layout editor's bar, across the top. -->
     <Frame name="BenillaMobileEditor" parent="UIParent" frameStrata="DIALOG" enableMouse="true" hidden="true">
+        <Scripts><OnLoad>this:SetScale(1.3)</OnLoad></Scripts>
         <Size><AbsDimension x="900" y="96"/></Size>
         <Anchors><Anchor point="TOP"><Offset><AbsDimension x="0" y="-8"/></Offset></Anchor></Anchors>
         <Backdrop bgFile="Interface\DialogFrame\UI-DialogBox-Background" edgeFile="Interface\Tooltips\UI-Tooltip-Border" tile="true">

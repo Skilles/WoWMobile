@@ -61,6 +61,10 @@
             return BenillaMobile_FormatValue(row, value)
         end
 
+        -- The window at the screen's size, not benilla's desktop 0.78: its own fit to the screen
+        -- (BenillaOptionsFrame_UpdateScale) still caps it.
+        BENILLA_ERA_WINDOW_SCALE = 1.25
+
         -- A UI scale up to 160%: fingers are wider than a pointer.
         BENILLA_MOBILE_UI_SCALE_MAX = 1.6
         BenillaOptionsSliderRow_Setup(BenillaOptionsFrameContainerBodyGraphicsRowUiScale,
