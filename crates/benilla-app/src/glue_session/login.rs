@@ -48,6 +48,11 @@ pub(super) fn build(app: &mut App) {
                 .after(benilla_world::schedule::WorldStage::Net),
         )
         .add_systems(Update, debug_login_shot.after(LoginPolicy));
+    #[cfg(target_os = "ios")]
+    app.add_systems(
+        Update,
+        super::remembered::remember_on_roster.after(LoginPolicy),
+    );
 }
 
 // ── The credential policy ────────────────────────────────────────────────────────────────────────
@@ -82,6 +87,12 @@ pub(crate) struct LoginIntent {
 }
 
 impl LoginIntent {
+    /// The session's credentials, while it holds any.
+    #[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+    pub(crate) fn creds(&self) -> Option<&(String, String)> {
+        self.creds.as_ref()
+    }
+
     /// Forget the session's credentials and any scheduled retry.
     pub(crate) fn clear(&mut self) {
         self.creds = None;
@@ -259,6 +270,14 @@ pub(crate) fn drive_policy(
                     }
                 }
             }
+        } else {
+            // iOS: the account the last launch reached select with (`remembered`).
+            #[cfg(target_os = "ios")]
+            if let Some((user, pass)) = super::remembered::load() {
+                info!("login: signing in as the remembered account {user}");
+                attempt.intent.creds = Some((user, pass));
+                attempt.intent.retry_at = Some(now);
+            }
         }
     }
 
@@ -283,6 +302,10 @@ pub(crate) fn drive_policy(
                 // A refusal from either server: shown even on the silent path, never retried.
                 let byte = refusal.byte();
                 warn!("login: refused ({refusal:?}, {byte:#04x}) — {}", msg.reason);
+                #[cfg(target_os = "ios")]
+                if super::remembered::refuses_credentials(refusal) {
+                    super::remembered::forget();
+                }
                 attempt.intent.clear();
                 if may_end_the_run
                     && crate::run_mode::fatal_when_driverless(&format!(
