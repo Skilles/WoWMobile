@@ -100,5 +100,5 @@ if [[ $launch == 1 ]]; then
         env_args=(--environment-variables "{\"RUST_LOG\":\"$RUST_LOG\"}")
     fi
     xcrun devicectl device process launch --device "$DEVICE" --terminate-existing \
-        "${env_args[@]}" "$BUNDLE_ID"
+        ${env_args[@]+"${env_args[@]}"} "$BUNDLE_ID"
 fi
