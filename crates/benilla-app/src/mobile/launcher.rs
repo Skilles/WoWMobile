@@ -124,7 +124,13 @@ fn load() -> Store {
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default();
+    // The earlier sign-in leaves the Keychain as it moves, so the store it lands in is written
+    // now: `with_store` compares against the store after the load.
+    let before = store.clone();
     migrate_single_login(&mut store);
+    if store != before {
+        save(&store);
+    }
     store
 }
 
