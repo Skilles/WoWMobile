@@ -29,10 +29,12 @@ head, body = open(sys.argv[1]).read().split("\n", 1)
 d = json.loads(body)
 if "processes" in d:
     page = d.get("memoryStatus", {}).get("pageSize", 16384)
-    for p in d["processes"]:
-        if "benilla" in p.get("name", ""):
-            mb = p.get("rpages", 0) * page / 2**20
-            print(f"jetsam: benilla at {mb:.0f} MB, reason {p.get('reason')}")
+    ours = [p for p in d["processes"] if "benilla" in p.get("name", "")]
+    for p in ours:
+        mb = p.get("rpages", 0) * page / 2**20
+        print(f"jetsam: benilla at {mb:.0f} MB, reason {p.get('reason')}")
+    if not ours:
+        print("jetsam: benilla is not in this report (iOS reclaimed other apps)")
     sys.exit(0)
 print(d.get("exception"), d.get("termination", {}).get("indicator"))
 th = d["threads"][d.get("faultingThread", 0)]
