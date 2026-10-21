@@ -36,3 +36,6 @@ Without a scene manifest the iOS backend behaves as upstream. Every change is ma
   lock during play.
 - `window.rs`: a window made on a scene skips `setScreen:` for borderless fullscreen (a UIKit error
   under the scene lifecycle; the scene sets the screen).
+- `app_state.rs`: the two event-order diagnostics in `handle_nonuser_events` (`RedrawRequested`
+  during the main event loop, a non-redraw event after it) log at `trace`, not `info` and `warn`:
+  under bevy's loop both fire every frame, and a line a frame costs a phone's battery.

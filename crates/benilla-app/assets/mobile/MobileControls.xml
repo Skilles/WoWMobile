@@ -55,13 +55,16 @@
             { id = "button1", frame = "BenillaMobileButton1", label = "Button 1", x = 0.935, y = 0.52, scale = 1, action = "target" },
             { id = "button2", frame = "BenillaMobileButton2", label = "Button 2", x = 0.935, y = 0.40, scale = 1, action = "chat" },
             { id = "button3", frame = "BenillaMobileButton3", label = "Button 3", x = 0.065, y = 0.64, scale = 1, action = "autorun", hidden = 1 },
+            -- Shown only while something is in reach (`MobileAssist.xml`).
+            { id = "context", frame = "BenillaMobileContextButton", label = "Context Button", x = 0.78, y = 0.45, scale = 1.15,
+              wanted = function() return BenillaMobileContext_Wanted and BenillaMobileContext_Wanted() end },
         }
 
         -- What each view shows: the jump ring's slots are their own entry.
         BENILLA_MOBILE_VIEWS = {
-            combat = { ring = 1, slots = 1, menu = 1, button1 = 1, button2 = 1, button3 = 1 },
-            explore = { ring = 1, menu = 1, button2 = 1, button3 = 1 },
-            social = { ring = 1, menu = 1, button2 = 1 },
+            combat = { ring = 1, slots = 1, menu = 1, button1 = 1, button2 = 1, button3 = 1, context = 1 },
+            explore = { ring = 1, menu = 1, button2 = 1, button3 = 1, context = 1 },
+            social = { ring = 1, menu = 1, button2 = 1, context = 1 },
             minimal = { menu = 1 },
         }
         BENILLA_MOBILE_VIEW_ORDER = { "combat", "explore", "social", "minimal" }
@@ -125,29 +128,42 @@
             local view = BENILLA_MOBILE_VIEWS[GetCVar("mobileView") or "combat"] or BENILLA_MOBILE_VIEWS.combat
             local alpha = BenillaMobile_Alpha()
             -- GetScreenWidth: the UIParent units its children are placed in, under any UI scale.
+            -- Shares are of the whole screen, where the safe area has moved UIParent's corner.
             local w, h = GetScreenWidth(), GetScreenHeight()
+            local left, right, top, bottom = 0, 0, 0, 0
+            if BenillaMobileSafe_Insets then
+                left, right, top, bottom = BenillaMobileSafe_Insets()
+            end
             for _, e in ipairs(BENILLA_MOBILE_ELEMENTS) do
                 local f = getglobal(e.frame)
-                local x, y, scale, hidden, action = BenillaMobile_Get(e.id)
-                f:SetScale(scale)
-                f:ClearAllPoints()
-                f:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x * w / scale, y * h / scale)
-                if f.SetCommand then f:SetCommand(action) end
-                local shown = on and view[e.id] and not BenillaMobile_IsHidden(hidden)
-                if BenillaMobile.editing then
-                    f:Show()
-                    if BenillaMobile_IsHidden(hidden) then f:SetAlpha(0.35) else f:SetAlpha(1) end
-                elseif shown then
-                    f:SetAlpha(alpha)
-                    f:Show()
-                else
-                    f:Hide()
+                -- Each file's frames load in turn: one still to come is placed when it has.
+                if f then
+                    local x, y, scale, hidden, action = BenillaMobile_Get(e.id)
+                    f:SetScale(scale)
+                    f:ClearAllPoints()
+                    f:SetPoint("CENTER", UIParent, "BOTTOMLEFT", (x * w - left) / scale, (y * h - bottom) / scale)
+                    if f.SetCommand then f:SetCommand(action) end
+                    local shown = on and view[e.id] and not BenillaMobile_IsHidden(hidden)
+                        and (not e.wanted or e.wanted())
+                    if BenillaMobile.editing then
+                        f:Show()
+                        if BenillaMobile_IsHidden(hidden) then f:SetAlpha(0.35) else f:SetAlpha(1) end
+                    elseif shown then
+                        f:SetAlpha(alpha)
+                        f:Show()
+                    else
+                        f:Hide()
+                    end
                 end
             end
+            -- An empty slot shows only while something is dragged over the bars, as the stock
+            -- buttons do (ActionButton_Update), or in the editor.
             local slots = BenillaMobile.editing or view.slots
             for k = 1, 8 do
                 local s = getglobal("BenillaMobileRingSlot" .. k)
-                if slots then s:Show() else s:Hide() end
+                local filled = BenillaMobile.editing or (s.showgrid or 0) > 0
+                    or HasAction(ActionButton_GetPagedID(s))
+                if slots and filled then s:Show() else s:Hide() end
             end
         end
 
@@ -169,7 +185,8 @@
             local now = BenillaMobile_Alpha()
             if now ~= was and not BenillaMobile.editing then
                 for _, e in ipairs(BENILLA_MOBILE_ELEMENTS) do
-                    getglobal(e.frame):SetAlpha(now)
+                    local f = getglobal(e.frame)
+                    if f then f:SetAlpha(now) end
                 end
             end
         end
@@ -292,6 +309,7 @@
                 BenillaMobileLayout_Select(this.elementId)
                 return
             end
+            if BenillaAssist_Haptic then BenillaAssist_Haptic("mobileHapticButtons", "light") end
             local c = BENILLA_MOBILE_COMMAND[this.command or ""]
             if c then c.run() end
         end

@@ -10,3 +10,5 @@ MobileOptions.xml
 MobileControls.xml
 # The game controller's cursor, layer bindings and Controller Buttons screen.
 MobilePad.xml
+# The assists: what a finger is on, the context button, smart targeting, haptics and the safe area.
+MobileAssist.xml

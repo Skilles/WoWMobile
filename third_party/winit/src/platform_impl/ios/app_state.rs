@@ -552,10 +552,12 @@ pub(crate) fn handle_nonuser_events<I: IntoIterator<Item = EventWrapper>>(
     for wrapper in events {
         match wrapper {
             EventWrapper::StaticEvent(event) => {
+                // benilla: trace, not info and warn: under bevy's loop both fire every frame, and
+                // a log line a frame is a phone's battery spent on formatting.
                 if !processing_redraws && event.is_redraw() {
-                    tracing::info!("processing `RedrawRequested` during the main event loop");
+                    tracing::trace!("processing `RedrawRequested` during the main event loop");
                 } else if processing_redraws && !event.is_redraw() {
-                    tracing::warn!(
+                    tracing::trace!(
                         "processing non `RedrawRequested` event after the main event loop: {:#?}",
                         event
                     );

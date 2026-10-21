@@ -54,7 +54,7 @@ pub(crate) enum CursorKind {
 
 impl CursorKind {
     /// The cursor's BLP stem in `Interface\Cursor\`.
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             CursorKind::Point => "Point",
             CursorKind::Attack => "Attack",
@@ -588,7 +588,7 @@ pub(super) fn classify_cursor(
 }
 
 #[derive(bevy::ecs::system::SystemParam)]
-pub(super) struct CursorInputs<'w, 's> {
+pub(crate) struct CursorInputs<'w, 's> {
     relations: super::RelationWorld<'w, 's>,
     player: Res<'w, crate::player::Player>,
     // The attack leg's `[0xb4b3e4]` clear.
@@ -619,7 +619,7 @@ pub(super) struct CursorInputs<'w, 's> {
 }
 
 /// The cursor and the attack fork over a pick; no pick, or nothing resolvable, reads Point.
-pub(super) fn classify(
+pub(crate) fn classify(
     inputs: &CursorInputs,
     hovered: &Hovered,
     hovered_object: &HoveredObject,

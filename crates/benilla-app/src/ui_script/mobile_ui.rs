@@ -17,6 +17,8 @@ pub(super) fn load(script: &UiScript, manifest: &str) -> Vec<String> {
         if let Err(e) = crate::mobile::launcher::install(script) {
             return vec![format!("benilla-mobile: the launcher's functions: {e}")];
         }
+    } else if let Err(e) = crate::mobile::assist::install(script) {
+        return vec![format!("benilla-mobile: the assists' functions: {e}")];
     }
     let mobile = super::addons::Addon::mobile(manifest);
     mobile.load_files(script, &mobile.toc.files)
@@ -41,6 +43,8 @@ mod tests {
         super::super::action_bar_tests::load_action_bar(&s);
         super::super::test_ui::load_ui_strict(&s, "MobileControls.xml");
         super::super::test_ui::load_ui_strict(&s, "MobilePad.xml");
+        super::super::test_ui::load_ui_strict(&s, "MobileAssist.xml");
+        crate::mobile::assist::install(&s).unwrap();
         assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
         let _ = &mut s;
         s
@@ -160,9 +164,13 @@ mod tests {
     fn a_view_shows_its_controls() {
         benilla_formats::wow_data_or_skip!();
         let s = controls();
+        // Slot 1 holds an action, slot 2 none.
+        s.run("HasAction = function(id) return id == ActionButton_GetPagedID(BenillaMobileRingSlot1) end")
+            .unwrap();
         s.run("BenillaMobile_Poll()").unwrap();
         let shown = |f: &str| -> bool { s.eval(&format!("return {f}:IsShown() == 1")).unwrap() };
         assert!(shown("BenillaMobileRing") && shown("BenillaMobileRingSlot1"));
+        assert!(!shown("BenillaMobileRingSlot2"), "an empty slot hides");
         assert!(shown("BenillaMobileMenuButton") && shown("BenillaMobileButton1"));
         // Button 3 is hidden by its default layout.
         assert!(!shown("BenillaMobileButton3"));
@@ -320,6 +328,134 @@ mod tests {
             .eval("return UIDropDownMenu_GetText(BenillaOptionsFrameContainerBodyGraphicsRowFrameRateDropdown)")
             .unwrap();
         assert_eq!(shown, "30 fps");
+    }
+
+    #[test]
+    fn the_touch_layer_learns_what_a_finger_is_on() {
+        benilla_formats::wow_data_or_skip!();
+        let s = controls();
+        for (name, kind) in [
+            ("ContainerFrame1Item3", "item"),
+            ("CharacterHeadSlot", "item"),
+            ("CharacterBag0Slot", "plain"),
+            ("SpellButton4", "spell"),
+            ("MultiBarBottomLeftButton2", "action"),
+            ("BenillaMobileRingSlot1", "action"),
+            ("GameMenuButtonOptions", "plain"),
+        ] {
+            let got: String = s
+                .eval(&format!(
+                    "GetMouseFocus = function() return {{ GetName = function() return \"{name}\" end }} end
+                     return BenillaMobile_TouchKind()"
+                ))
+                .unwrap();
+            assert_eq!(got, kind, "{name}");
+        }
+        s.run("SetCVar('mobileItemGestures', '0')").unwrap();
+        let off: String = s.eval("return BenillaMobile_TouchKind()").unwrap();
+        assert_eq!(off, "plain", "the option off");
+    }
+
+    #[test]
+    fn an_action_refused_for_want_of_a_target_goes_again_at_the_nearest_enemy() {
+        benilla_formats::wow_data_or_skip!();
+        let s = controls();
+        let retried: bool = s
+            .eval(
+                // As the UseAction hook leaves it; the engine's own UseAction needs the game.
+                "local asked = nil
+                 TargetNearestEnemy = function() asked = 1 end
+                 UnitExists = function() return nil end
+                 BenillaAssist.action, BenillaAssist.actionAt = 1, GetTime()
+                 BenillaAssist.actionSelf, BenillaAssist.retried = nil, nil
+                 BenillaAssist_OnError(ERR_GENERIC_NO_TARGET)
+                 return asked ~= nil",
+            )
+            .unwrap();
+        assert!(retried);
+        let again: bool = s
+            .eval(
+                "local asked = nil
+                 TargetNearestEnemy = function() asked = 1 end
+                 BenillaAssist_OnError(ERR_GENERIC_NO_TARGET)
+                 return asked ~= nil",
+            )
+            .unwrap();
+        assert!(!again, "once an action");
+    }
+
+    #[test]
+    fn a_big_hit_and_low_health_tap_back() {
+        benilla_formats::wow_data_or_skip!();
+        let s = controls();
+        crate::mobile::assist::HAPTICS_PLAYED
+            .lock()
+            .unwrap()
+            .clear();
+        s.run(
+            "local hp = 100
+             UnitHealth = function() return hp end
+             UnitHealthMax = function() return 100 end
+             UnitIsDeadOrGhost = function() return nil end
+             BenillaAssist_OnHealth()
+             hp = 60; BenillaAssist.hapticAt = nil; BenillaAssist_OnHealth()
+             hp = 20; BenillaAssist.hapticAt = nil; BenillaAssist_OnHealth()",
+        )
+        .unwrap();
+        let played = crate::mobile::assist::HAPTICS_PLAYED
+            .lock()
+            .unwrap()
+            .clone();
+        assert!(played.contains(&"heavy".to_string()), "{played:?}");
+        assert!(played.contains(&"warning".to_string()), "{played:?}");
+    }
+
+    #[test]
+    fn the_safe_area_insets_the_interface_and_not_the_touch_controls() {
+        benilla_formats::wow_data_or_skip!();
+        let s = controls();
+        let before: f64 = s
+            .eval("BenillaMobile.seen = {}; BenillaMobile_Poll(); return BenillaMobileMenuButton:GetCenter()")
+            .unwrap();
+        s.run(
+            "BENILLA_MOBILE_SAFE = { left = 0.065, right = 0.065, top = 0, bottom = 0.048 }
+             BenillaMobileSafe_Apply()",
+        )
+        .unwrap();
+        let left: f64 = s
+            .eval("return UIParent:GetLeft() / GetScreenWidth()")
+            .unwrap();
+        benilla_ui::assert_near!(left, 0.065, "UIParent's inset");
+        let after: f64 = s
+            .eval("return BenillaMobileMenuButton:GetCenter()")
+            .unwrap();
+        benilla_ui::assert_near!(after, before, "the menu button stays put");
+        s.run("SetCVar('mobileSafeArea', '0'); BenillaMobileSafe_Apply()")
+            .unwrap();
+        let off: f64 = s.eval("return UIParent:GetLeft()").unwrap();
+        benilla_ui::assert_near!(off, 0.0, "the option off");
+    }
+
+    #[test]
+    fn the_context_button_shows_only_with_something_in_reach() {
+        benilla_formats::wow_data_or_skip!();
+        let s = controls();
+        let hidden: bool = s
+            .eval(
+                "BenillaMobileContext_Update(); return BenillaMobileContextButton:IsShown() ~= nil",
+            )
+            .unwrap();
+        assert!(!hidden);
+        let (shown, label): (bool, String) = s
+            .eval(
+                "BENILLA_MOBILE_CONTEXT_VERB = 'Loot'
+                 BENILLA_MOBILE_CONTEXT_ICON = 'Interface\\Cursor\\LootAll'
+                 BenillaMobileContext_Update()
+                 return BenillaMobileContextButton:IsShown() ~= nil, BenillaMobileContextButtonLabel:GetText()",
+            )
+            .unwrap();
+        assert!(shown);
+        assert_eq!(label, "Loot");
     }
 
     /// Every file the two mobile manifests name ships.

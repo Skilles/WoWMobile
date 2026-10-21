@@ -185,8 +185,16 @@ fn route_touches(
     state.router.config.hold_secs = settings.hold;
     state.router.config.joystick_radius = STICK_RADIUS * settings.stick;
     state.router.config.joystick_zone = settings.zone;
+    // The interface says what the hovered frame is, asked only while fingers are landing or
+    // lifting: a Lua call a frame would cost every frame for nothing.
+    let kind = if batch.is_empty() && !state.router.awaits_ui() {
+        router::Kind::Plain
+    } else {
+        script.as_deref().map_or(router::Kind::Plain, touch_kind)
+    };
     let ctx = Context {
         over_ui: over_ui.is_some_and(|o| o.0),
+        kind,
         in_world: controls_live(client.as_deref(), &settings),
         typing: script.is_some_and(|s| s.has_keyboard_focus()),
         window: size,
@@ -252,6 +260,20 @@ fn route_touches(
         debug!("touch: movement keys {keys:?}");
     }
     state.keys = keys;
+}
+
+/// `BenillaMobile_TouchKind()` (`assets/mobile/MobileControls.xml`): what the frame under the
+/// cursor is. The glue screens have no such function, and every frame there is plain.
+fn touch_kind(script: &UiScript) -> router::Kind {
+    let answer = script.eval::<Option<String>>(
+        "return BenillaMobile_TouchKind and BenillaMobile_TouchKind() or nil",
+    );
+    match answer.ok().flatten().as_deref() {
+        Some("item") => router::Kind::Item,
+        Some("spell") => router::Kind::Spell,
+        Some("action") => router::Kind::Action,
+        _ => router::Kind::Plain,
+    }
 }
 
 #[derive(Component)]

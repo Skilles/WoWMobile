@@ -58,7 +58,27 @@
             BenillaOptionsPage_Refresh("Graphics")
         end
 
+        BENILLA_MOBILE_TIP_ITEM_TAPS = "Tap an item or a spell to see what it is, double-tap it to "
+            .. "use it, and hold it to pick it up and move it. Off, a tap clicks and holding "
+            .. "right-clicks, as everywhere else."
+        BENILLA_MOBILE_TIP_CONTEXT = "A button that appears when something is in reach and does "
+            .. "what a right-click on it would: talk, loot, gather, mine, open, skin."
+        BENILLA_MOBILE_TIP_SMART_TARGET = "An attack or spell you use with no enemy targeted "
+            .. "targets the nearest enemy and goes again."
+        BENILLA_MOBILE_TIP_HAPTICS = "Let the phone tap back."
+        BENILLA_MOBILE_TIP_HAPTIC_BUTTONS = "A light tap as you press a button."
+        BENILLA_MOBILE_TIP_HAPTIC_COMBAT = "A thump on a big hit or a pull, and a warning on low "
+            .. "health."
+        BENILLA_MOBILE_TIP_SAFE_AREA = "Keep the interface clear of the Dynamic Island, the "
+            .. "rounded corners and the home indicator. The world still fills the screen."
+
         table.insert(BENILLA_OPTIONS_CATEGORY_KEYS, "Mobile")
+        table.insert(BENILLA_OPTIONS_CATEGORY_KEYS, "Assists")
+        BENILLA_OPTIONS_PAGE_ROWS.Assists = {
+            "RowItemTaps", "RowContext", "RowSmartTarget",
+            "RowHaptics", "RowHapticButtons", "RowHapticCombat",
+            "RowSafeArea",
+        }
         BENILLA_OPTIONS_PAGE_ROWS.Mobile = {
             "RowTouch", "RowView", "RowAlpha", "RowLook", "RowHold", "RowStick", "RowZone",
             "RowRing",
@@ -122,6 +142,92 @@
         <Anchors><Anchor point="TOPLEFT" relativeTo="BenillaOptionsFrameCategoryListHeaderMobile" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-2"/></Offset></Anchor></Anchors>
         <Scripts><OnLoad>BenillaOptionsCategoryRow_OnLoad(this, "Mobile", "Touch &amp; Controller")</OnLoad></Scripts>
     </Button>
+
+    <Button name="BenillaOptionsFrameCategoryListRowAssists" inherits="BenillaOptionsCategoryRowTemplate"
+        parent="BenillaOptionsFrameCategoryList">
+        <Anchors><Anchor point="TOPLEFT" relativeTo="BenillaOptionsFrameCategoryListRowMobile" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-2"/></Offset></Anchor></Anchors>
+        <Scripts><OnLoad>BenillaOptionsCategoryRow_OnLoad(this, "Assists", "Assists &amp; Feedback")</OnLoad></Scripts>
+    </Button>
+
+    <Button name="BenillaOptionsFrameContainerBodySearchHeadAssists" inherits="BenillaOptionsSearchHeadTemplate"
+        parent="BenillaOptionsFrameContainerBody">
+        <Scripts><OnLoad>
+            this.categoryKey = "Assists"
+            getglobal(this:GetName() .. "Label"):SetText("Assists &amp; Feedback")
+        </OnLoad></Scripts>
+    </Button>
+
+    <Frame name="BenillaOptionsFrameContainerBodyAssists" parent="BenillaOptionsFrameContainerBody" hidden="true">
+        <Anchors>
+            <Anchor point="TOPLEFT"/>
+            <Anchor point="BOTTOMRIGHT"/>
+        </Anchors>
+        <Frames>
+            <Frame name="$parentRowItemTaps" inherits="BenillaOptionsCheckboxRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT"><Offset><AbsDimension x="10" y="-12"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT"><Offset><AbsDimension x="-20" y="-12"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileItemGestures", "Tap, Double-Tap and Hold Items", "BENILLA_MOBILE_TIP_ITEM_TAPS")
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowContext" inherits="BenillaOptionsCheckboxRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowItemTaps" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowItemTaps" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileContextButton", "Context Button", "BENILLA_MOBILE_TIP_CONTEXT")
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowSmartTarget" inherits="BenillaOptionsCheckboxRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowContext" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowContext" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileSmartTarget", "Smart Targeting", "BENILLA_MOBILE_TIP_SMART_TARGET")
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowHaptics" inherits="BenillaOptionsCheckboxRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowSmartTarget" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowSmartTarget" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileHaptics", "Haptics", "BENILLA_MOBILE_TIP_HAPTICS")
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowHapticButtons" inherits="BenillaOptionsCheckboxRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowHaptics" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowHaptics" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileHapticButtons", "On Button Presses", "BENILLA_MOBILE_TIP_HAPTIC_BUTTONS", 1)
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowHapticCombat" inherits="BenillaOptionsCheckboxRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowHapticButtons" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowHapticButtons" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileHapticCombat", "In Combat", "BENILLA_MOBILE_TIP_HAPTIC_COMBAT", 1)
+                </OnLoad></Scripts>
+            </Frame>
+            <Frame name="$parentRowSafeArea" inherits="BenillaOptionsCheckboxRowTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentRowHapticCombat" relativePoint="BOTTOMLEFT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                    <Anchor point="TOPRIGHT" relativeTo="$parentRowHapticCombat" relativePoint="BOTTOMRIGHT"><Offset><AbsDimension x="0" y="-9"/></Offset></Anchor>
+                </Anchors>
+                <Scripts><OnLoad>
+                    BenillaOptionsRow_OnLoad(this, "mobileSafeArea", "Fit Around the Dynamic Island", "BENILLA_MOBILE_TIP_SAFE_AREA")
+                </OnLoad></Scripts>
+            </Frame>
+        </Frames>
+    </Frame>
 
     <Button name="BenillaOptionsFrameContainerBodySearchHeadMobile" inherits="BenillaOptionsSearchHeadTemplate"
         parent="BenillaOptionsFrameContainerBody">

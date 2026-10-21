@@ -3,6 +3,7 @@
 //! options window's Mobile page, and its input is [`crate::touch`].
 
 pub(crate) mod art;
+pub(crate) mod assist;
 pub(crate) mod console;
 pub(crate) mod gamepad;
 pub(crate) mod launcher;
@@ -41,6 +42,16 @@ impl bevy::app::Plugin for MobilePlugin {
             .add_systems(
                 Update,
                 gamepad::serve_pad_lua.in_set(crate::ui_script::UiDrain),
+            )
+            .init_resource::<assist::ContextTarget>()
+            .init_resource::<assist::AssistLua>()
+            .add_systems(
+                Update,
+                (
+                    assist::scan_context.after(crate::target::TargetUpdate),
+                    assist::use_context.before(crate::target::TargetUpdate),
+                    assist::serve_assist_lua.in_set(crate::ui_script::UiDrain),
+                ),
             )
             .init_resource::<power::FrameCap>()
             .add_observer(power::on_cvar)

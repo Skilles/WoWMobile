@@ -1,0 +1,238 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+    <!-- The mobile client's assists (crates/benilla-app/src/mobile/assist.rs): what a finger is on,
+         for the touch layer's item and spell gestures; the context button; smart targeting; the
+         haptics; and the safe area the interface keeps clear of the Dynamic Island. Each has a row
+         on the options window's Assists page. -->
+    <Script><![CDATA[
+        BenillaAssist = { seen = {} }
+
+        function BenillaAssist_On(cvar)
+            return GetCVar(cvar) ~= "0"
+        end
+
+        -- ── What a finger is on (the touch layer asks as it lands) ──
+        -- Names, as the stock interface makes them; an addon's own bag looks plain.
+        BENILLA_MOBILE_ITEM_FRAMES = {
+            "^ContainerFrame%d+Item%d+$", "^Character%a+Slot$", "^BankFrameItem%d+$",
+            "^MerchantItem%d+ItemButton$", "^MerchantBuyBackItemItemButton$",
+        }
+        BENILLA_MOBILE_SPELL_FRAMES = { "^SpellButton%d+$" }
+        BENILLA_MOBILE_ACTION_FRAMES = {
+            "^ActionButton%d+$", "^BonusActionButton%d+$", "^MultiBar%a+Button%d+$",
+            "^BenillaMobileRingSlot%d+$", "^PetActionButton%d+$", "^ShapeshiftButton%d+$",
+        }
+
+        local function BenillaAssist_Matches(name, patterns)
+            for _, p in ipairs(patterns) do
+                if string.find(name, p) then return 1 end
+            end
+        end
+
+        -- "item", "spell", "action" or "plain". With something on the cursor every frame is plain:
+        -- a tap puts it down.
+        function BenillaMobile_TouchKind()
+            if not BenillaAssist_On("mobileItemGestures") then return "plain" end
+            if CursorHasItem() or CursorHasSpell() then return "plain" end
+            local focus = GetMouseFocus()
+            local name = focus and focus:GetName()
+            if not name then return "plain" end
+            if BenillaAssist_Matches(name, BENILLA_MOBILE_ITEM_FRAMES) then return "item" end
+            if BenillaAssist_Matches(name, BENILLA_MOBILE_SPELL_FRAMES) then return "spell" end
+            if BenillaAssist_Matches(name, BENILLA_MOBILE_ACTION_FRAMES) then return "action" end
+            return "plain"
+        end
+
+        -- ── Haptics ──
+        function BenillaAssist_Haptic(kind, style)
+            if not BenillaAssist_On("mobileHaptics") or not BenillaAssist_On(kind) then return end
+            -- Never two within a breath: a flurry of hits is one thump.
+            local now = GetTime()
+            if BenillaAssist.hapticAt and now - BenillaAssist.hapticAt < 0.12 then return end
+            BenillaAssist.hapticAt = now
+            BenillaMobile_Haptic(style)
+        end
+
+        -- ── Smart targeting: an action the game refused for want of an enemy target goes again
+        -- at the nearest enemy, once ──
+        BENILLA_MOBILE_NO_TARGET_ERRORS = {}
+        for _, key in ipairs({ "ERR_GENERIC_NO_TARGET", "SPELL_FAILED_BAD_TARGETS",
+                "SPELL_FAILED_BAD_IMPLICIT_TARGETS", "SPELL_FAILED_TARGETS_DEAD",
+                "SPELL_FAILED_TARGET_FRIENDLY", "ERR_INVALID_ATTACK_TARGET" }) do
+            local text = getglobal(key)
+            if text then BENILLA_MOBILE_NO_TARGET_ERRORS[text] = 1 end
+        end
+
+        local BenillaAssist_UseAction = UseAction
+        function UseAction(slot, checkCursor, onSelf)
+            BenillaAssist.action = slot
+            BenillaAssist.actionAt = GetTime()
+            BenillaAssist.actionSelf = onSelf
+            BenillaAssist.retried = nil
+            BenillaAssist_Haptic("mobileHapticButtons", "light")
+            return BenillaAssist_UseAction(slot, checkCursor, onSelf)
+        end
+
+        local BenillaAssist_Jump = Jump
+        function Jump()
+            BenillaAssist_Haptic("mobileHapticButtons", "light")
+            return BenillaAssist_Jump()
+        end
+
+        function BenillaAssist_OnError(message)
+            if not BenillaAssist_On("mobileSmartTarget") or BenillaAssist.retried then return end
+            if not BenillaAssist.action or BenillaAssist.actionSelf then return end
+            if GetTime() - (BenillaAssist.actionAt or 0) > 0.5 then return end
+            if not BENILLA_MOBILE_NO_TARGET_ERRORS[message] then return end
+            BenillaAssist.retried = 1
+            TargetNearestEnemy()
+            if UnitExists("target") and UnitCanAttack("player", "target") then
+                BenillaAssist_UseAction(BenillaAssist.action)
+            end
+        end
+
+        -- ── Combat haptics: a big hit, low health, a pull, a death ──
+        function BenillaAssist_OnHealth()
+            local hp, max = UnitHealth("player"), UnitHealthMax("player")
+            if not max or max <= 0 then return end
+            local last = BenillaAssist.health
+            BenillaAssist.health = hp
+            if last and hp < last and not UnitIsDeadOrGhost("player") then
+                local drop = (last - hp) / max
+                if drop >= 0.3 then
+                    BenillaAssist_Haptic("mobileHapticCombat", "heavy")
+                elseif drop >= 0.12 then
+                    BenillaAssist_Haptic("mobileHapticCombat", "medium")
+                end
+            end
+            if hp / max < 0.3 and hp > 0 then
+                if not BenillaAssist.lowWarned then
+                    BenillaAssist.lowWarned = 1
+                    BenillaAssist.hapticAt = nil
+                    BenillaAssist_Haptic("mobileHapticCombat", "warning")
+                end
+            elseif hp / max > 0.45 then
+                BenillaAssist.lowWarned = nil
+            end
+        end
+
+        -- ── The context button ──
+        function BenillaMobileContext_Wanted()
+            return BENILLA_MOBILE_CONTEXT_VERB and BenillaAssist_On("mobileContextButton")
+        end
+
+        function BenillaMobileContext_Update()
+            local b = BenillaMobileContextButton
+            if BENILLA_MOBILE_CONTEXT_VERB then
+                BenillaMobileRound_SetIcon(b, BENILLA_MOBILE_CONTEXT_ICON)
+                BenillaMobileContextButtonLabel:SetText(BENILLA_MOBILE_CONTEXT_VERB)
+            end
+            if BenillaMobile_Apply then BenillaMobile_Apply() end
+        end
+
+        -- ── The safe area: the interface kept clear of the Dynamic Island, the corners and the
+        -- home indicator, as iOS reports them; the world still fills the screen ──
+        function BenillaMobileSafe_Insets()
+            local s = BENILLA_MOBILE_SAFE
+            if not s or not BenillaAssist_On("mobileSafeArea") then return 0, 0, 0, 0 end
+            local w, h = GetScreenWidth(), GetScreenHeight()
+            return s.left * w, s.right * w, s.top * h, s.bottom * h
+        end
+
+        function BenillaMobileSafe_Apply()
+            local l, r, t, b = BenillaMobileSafe_Insets()
+            local key = string.format("%.1f,%.1f,%.1f,%.1f", l, r, t, b)
+            if BenillaAssist.seen.safe == key then return end
+            BenillaAssist.seen.safe = key
+            UIParent:ClearAllPoints()
+            UIParent:SetPoint("TOPLEFT", nil, "TOPLEFT", l, -t)
+            UIParent:SetPoint("BOTTOMRIGHT", nil, "BOTTOMRIGHT", -r, b)
+            -- The touch controls keep their own places on the whole screen.
+            if BenillaMobile_Apply then BenillaMobile_Apply() end
+        end
+
+        -- The options window fits the safe area, not the whole screen.
+        function BenillaOptionsFrame_UpdateScale()
+            local l, r, t, b = BenillaMobileSafe_Insets()
+            local k = BENILLA_ERA_WINDOW_SCALE
+            local wFit = (GetScreenWidth() - l - r) / 940
+            local hFit = (GetScreenHeight() - t - b) / 744
+            if wFit < k then k = wFit end
+            if hFit < k then k = hFit end
+            BenillaOptionsFrame:SetScale(k)
+        end
+
+        -- The assists' CVars the options page writes, read back each half second.
+        function BenillaAssist_Poll()
+            for _, name in ipairs({ "mobileSafeArea", "mobileContextButton" }) do
+                local v = GetCVar(name)
+                if BenillaAssist.seen[name] ~= v then
+                    BenillaAssist.seen[name] = v
+                    if name == "mobileSafeArea" then
+                        BenillaMobileSafe_Apply()
+                    elseif BenillaMobile_Apply then
+                        BenillaMobile_Apply()
+                    end
+                end
+            end
+            -- A new UI scale moves the insets in UIParent's units.
+            BenillaMobileSafe_Apply()
+        end
+    ]]></Script>
+
+    <Frame name="BenillaAssistFrame" parent="UIParent">
+        <Scripts>
+            <OnLoad>
+                this:RegisterEvent("UI_ERROR_MESSAGE")
+                this:RegisterEvent("UNIT_HEALTH")
+                this:RegisterEvent("PLAYER_REGEN_DISABLED")
+                this:RegisterEvent("PLAYER_DEAD")
+                this:RegisterEvent("PLAYER_ENTERING_WORLD")
+                this.elapsed = 0
+            </OnLoad>
+            <OnEvent>
+                if event == "UI_ERROR_MESSAGE" then
+                    BenillaAssist_OnError(arg1)
+                elseif event == "UNIT_HEALTH" then
+                    if arg1 == "player" then BenillaAssist_OnHealth() end
+                elseif event == "PLAYER_REGEN_DISABLED" then
+                    BenillaAssist_Haptic("mobileHapticCombat", "medium")
+                elseif event == "PLAYER_DEAD" then
+                    BenillaAssist.hapticAt = nil
+                    BenillaAssist_Haptic("mobileHapticCombat", "error")
+                elseif event == "PLAYER_ENTERING_WORLD" then
+                    BenillaAssist.health = nil
+                    BenillaAssist.seen = {}
+                    BenillaAssist_Poll()
+                end
+            </OnEvent>
+            <OnUpdate>
+                this.elapsed = this.elapsed + arg1
+                if this.elapsed > 0.5 then
+                    this.elapsed = 0
+                    BenillaAssist_Poll()
+                end
+            </OnUpdate>
+        </Scripts>
+    </Frame>
+
+    <!-- The context button: what the cursor would offer over the nearest thing in reach. -->
+    <Button name="BenillaMobileContextButton" inherits="BenillaMobileRoundTemplate" parent="UIParent" hidden="true">
+        <Scripts>
+            <OnLoad>
+                this.elementId = "context"
+                BenillaMobileRound_SetIcon(this, "Interface\\Cursor\\Speak")
+                getglobal(this:GetName() .. "Label"):SetText("Talk")
+            </OnLoad>
+            <OnClick>
+                if BenillaMobile.editing then
+                    BenillaMobileLayout_Select(this.elementId)
+                    return
+                end
+                BenillaAssist_Haptic("mobileHapticButtons", "light")
+                BenillaMobile_ContextUse()
+            </OnClick>
+            <OnMouseDown>BenillaMobileElement_OnMouseDown()</OnMouseDown>
+            <OnMouseUp>BenillaMobileElement_OnMouseUp()</OnMouseUp>
+        </Scripts>
+    </Button>
+</Ui>

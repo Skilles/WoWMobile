@@ -8,6 +8,10 @@
 //! - Any other finger is the mouse. A tap clicks left where it lifted; holding still is a right
 //!   click; a drag over UI is a left drag, and over the world a right-button mouse-look, which
 //!   steers the character as a right-drag does.
+//! - On an item or a spell ([`Kind`]) a tap only points at it, so its tooltip shows; a double tap
+//!   uses it (a right click on an item, a left on a spell); holding picks it up, to drag it or
+//!   drop it with the next tap. On an action button a tap still presses it, and holding picks
+//!   it up instead of right-clicking it.
 //! - A second mouse finger turns both into a pinch: spreading them zooms and moving them together
 //!   scrolls, both as the wheel.
 
@@ -60,11 +64,30 @@ pub(crate) struct Touch {
     pub(crate) pos: Vec2,
 }
 
+/// What a UI frame under a finger is, for the gestures it takes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Kind {
+    /// Any other frame, or anything while the cursor holds an item or a spell: tap is a click.
+    #[default]
+    Plain,
+    /// A bag, bank, merchant or equipment slot: used with a right click.
+    Item,
+    /// A spellbook spell: cast with a left click.
+    Spell,
+    /// An action button: pressed with a tap, as before; holding picks it up.
+    Action,
+}
+
+/// Two taps this close in time and place are a double tap.
+const DOUBLE_TAP_SECS: f32 = 0.35;
+
 /// What the rest of the app tells the router about this frame.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Context {
     /// The cursor is over a UI frame (what the cursor showed last frame).
     pub(crate) over_ui: bool,
+    /// What that frame is (from last frame's cursor, as `over_ui`).
+    pub(crate) kind: Kind,
     /// In the world: the joystick and the buttons are live.
     pub(crate) in_world: bool,
     /// An EditBox has the keyboard: the joystick holds no keys.
@@ -133,8 +156,9 @@ enum Role {
         last: Vec2,
         since: f32,
         mode: Mode,
-        /// Whether a UI frame was under the finger where it landed; known from its second frame.
-        over_ui: Option<bool>,
+        /// Whether a UI frame was under the finger where it landed, and what it is; known from
+        /// its second frame.
+        over_ui: Option<(bool, Kind)>,
     },
     Pinch {
         last: Vec2,
@@ -156,6 +180,8 @@ pub(crate) struct Router {
     keys: MoveKeys,
     /// Updates so far: a button lifted in the update it went down in releases a frame later.
     frame: u64,
+    /// The last tap on an item or a spell, waiting for a second: where, when and on what.
+    last_tap: Option<(Vec2, f32, Kind)>,
 }
 
 impl Router {
@@ -170,6 +196,11 @@ impl Router {
     /// The movement keys held after the last [`Self::update`].
     pub(crate) fn keys(&self) -> MoveKeys {
         self.keys
+    }
+
+    /// A finger landed last frame and waits for the UI's answer about where.
+    pub(crate) fn awaits_ui(&self) -> bool {
+        !self.fresh.is_empty()
     }
 
     fn mouse_down(&self) -> bool {
@@ -193,7 +224,7 @@ impl Router {
                             last,
                             since: now,
                             mode: Mode::Pending,
-                            over_ui: Some(true),
+                            over_ui: Some((true, ctx.kind)),
                         }
                     } else {
                         Role::Joystick {
@@ -217,7 +248,7 @@ impl Router {
                             last,
                             since,
                             mode,
-                            over_ui: Some(ctx.over_ui),
+                            over_ui: Some((ctx.over_ui, ctx.kind)),
                         },
                     );
                 }
@@ -229,18 +260,31 @@ impl Router {
             match t.phase {
                 Phase::Start => self.start(t, now, ctx, &mut out),
                 Phase::Move => self.moved(t, ctx, &mut out),
-                Phase::End | Phase::Cancel => self.end(t, &mut out),
+                Phase::End | Phase::Cancel => self.end(t, now, ctx, &mut out),
             }
         }
 
-        // A mouse finger held still long enough is a right click where it landed.
+        // A mouse finger held still long enough is a right click where it landed; on an item, a
+        // spell or an action button it picks the thing up: the left button goes down and stays
+        // down, a drag from here.
         let cfg = self.config;
         for role in self.roles.values_mut() {
-            if let Role::Mouse { since, mode, .. } = role {
+            if let Role::Mouse {
+                since,
+                mode,
+                over_ui,
+                ..
+            } = role
+            {
                 if *mode == Mode::Pending && now - *since >= cfg.hold_secs {
-                    *mode = Mode::Held;
-                    out.push(Output::Press(Button::Right));
-                    self.deferred.push(Output::Release(Button::Right));
+                    if matches!(over_ui, Some((true, k)) if *k != Kind::Plain) {
+                        *mode = Mode::UiDrag;
+                        out.push(Output::Press(Button::Left));
+                    } else {
+                        *mode = Mode::Held;
+                        out.push(Output::Press(Button::Right));
+                        self.deferred.push(Output::Release(Button::Right));
+                    }
                 }
             }
         }
@@ -361,7 +405,7 @@ impl Router {
             } => {
                 let mode = match mode {
                     Mode::Pending if t.pos.distance(start) > cfg.slop => {
-                        if over_ui.unwrap_or(ctx.over_ui) {
+                        if over_ui.map_or(ctx.over_ui, |(ui, _)| ui) {
                             out.push(Output::Press(Button::Left));
                             out.push(Output::Cursor(t.pos));
                             Mode::UiDrag
@@ -412,10 +456,39 @@ impl Router {
         }
     }
 
-    fn end(&mut self, t: &Touch, out: &mut Vec<Output>) {
+    fn end(&mut self, t: &Touch, now: f32, ctx: &Context, out: &mut Vec<Output>) {
         self.fresh.retain(|id| *id != t.id);
         let cancel = t.phase == Phase::Cancel;
         match self.roles.remove(&t.id) {
+            // A tap on an item or a spell: a pointer the first time, a use the second.
+            Some(Role::Mouse {
+                mode: Mode::Pending,
+                over_ui,
+                ..
+            }) if !cancel
+                && matches!(
+                    over_ui.unwrap_or((ctx.over_ui, ctx.kind)),
+                    (true, Kind::Item | Kind::Spell)
+                ) =>
+            {
+                let kind = over_ui.unwrap_or((ctx.over_ui, ctx.kind)).1;
+                let second = self.last_tap.take().is_some_and(|(at, when, k)| {
+                    k == kind
+                        && now - when <= DOUBLE_TAP_SECS
+                        && at.distance(t.pos) <= self.config.slop * 2.0
+                });
+                if second {
+                    let button = if kind == Kind::Item {
+                        Button::Right
+                    } else {
+                        Button::Left
+                    };
+                    out.push(Output::Press(button));
+                    self.deferred.push(Output::Release(button));
+                } else {
+                    self.last_tap = Some((t.pos, now, kind));
+                }
+            }
             // A tap in the joystick zone, too quick to have been asked about: a click.
             Some(Role::Probe { .. })
             | Some(Role::Mouse {
@@ -460,6 +533,7 @@ mod tests {
     fn ctx(over_ui: bool) -> Context {
         Context {
             over_ui,
+            kind: Kind::Plain,
             in_world: true,
             typing: false,
             window: Vec2::new(956.0, 440.0),
@@ -709,6 +783,99 @@ mod tests {
         assert_eq!(
             r.update(&[t(2, Phase::Start, 875.0, 325.0)], 0.0, &c),
             vec![Output::Cursor(Vec2::new(875.0, 325.0))]
+        );
+    }
+
+    fn on(kind: Kind) -> Context {
+        Context { kind, ..ctx(true) }
+    }
+
+    #[test]
+    fn a_tap_on_an_item_points_and_a_double_tap_uses_it() {
+        let mut r = Router::default();
+        let c = on(Kind::Item);
+        r.update(&[t(1, Phase::Start, 600.0, 200.0)], 0.0, &c);
+        r.update(&[], 0.02, &c);
+        assert!(
+            r.update(&[t(1, Phase::End, 600.0, 200.0)], 0.08, &c)
+                .is_empty(),
+            "the first tap only points"
+        );
+        r.update(&[t(2, Phase::Start, 603.0, 201.0)], 0.2, &c);
+        r.update(&[], 0.22, &c);
+        assert_eq!(
+            r.update(&[t(2, Phase::End, 603.0, 201.0)], 0.26, &c),
+            vec![Output::Press(Button::Right)]
+        );
+        assert_eq!(
+            r.update(&[], 0.28, &c),
+            vec![Output::Release(Button::Right)]
+        );
+    }
+
+    #[test]
+    fn taps_too_far_apart_in_time_are_two_points() {
+        let mut r = Router::default();
+        let c = on(Kind::Spell);
+        for (id, at) in [(1, 0.0), (2, 1.0)] {
+            r.update(&[t(id, Phase::Start, 600.0, 200.0)], at, &c);
+            r.update(&[], at + 0.02, &c);
+            assert!(r
+                .update(&[t(id, Phase::End, 600.0, 200.0)], at + 0.05, &c)
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn a_double_tap_on_a_spell_is_a_left_click() {
+        let mut r = Router::default();
+        let c = on(Kind::Spell);
+        r.update(&[t(1, Phase::Start, 600.0, 200.0)], 0.0, &c);
+        r.update(&[], 0.02, &c);
+        r.update(&[t(1, Phase::End, 600.0, 200.0)], 0.05, &c);
+        r.update(&[t(2, Phase::Start, 600.0, 200.0)], 0.15, &c);
+        r.update(&[], 0.17, &c);
+        assert_eq!(
+            r.update(&[t(2, Phase::End, 600.0, 200.0)], 0.2, &c),
+            vec![Output::Press(Button::Left)]
+        );
+    }
+
+    #[test]
+    fn holding_an_item_or_an_action_picks_it_up_to_drag() {
+        for kind in [Kind::Item, Kind::Action] {
+            let mut r = Router::default();
+            let c = on(kind);
+            r.update(&[t(1, Phase::Start, 600.0, 200.0)], 0.0, &c);
+            r.update(&[], 0.02, &c);
+            assert_eq!(
+                r.update(&[], 0.6, &c),
+                vec![Output::Press(Button::Left)],
+                "{kind:?}"
+            );
+            assert_eq!(
+                r.update(&[t(1, Phase::Move, 700.0, 250.0)], 0.7, &c),
+                vec![Output::Cursor(Vec2::new(700.0, 250.0))]
+            );
+            assert_eq!(
+                r.update(&[t(1, Phase::End, 700.0, 250.0)], 0.8, &c),
+                vec![
+                    Output::Cursor(Vec2::new(700.0, 250.0)),
+                    Output::Release(Button::Left)
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn a_tap_on_an_action_button_still_presses_it() {
+        let mut r = Router::default();
+        let c = on(Kind::Action);
+        r.update(&[t(1, Phase::Start, 600.0, 200.0)], 0.0, &c);
+        r.update(&[], 0.02, &c);
+        assert_eq!(
+            r.update(&[t(1, Phase::End, 600.0, 200.0)], 0.06, &c),
+            vec![Output::Press(Button::Left)]
         );
     }
 

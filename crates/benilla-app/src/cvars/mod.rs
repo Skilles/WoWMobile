@@ -3369,6 +3369,34 @@ mod tests {
                 "the mobile interface's touch controls show the view it names",
             ),
             (
+                "mobileItemGestures",
+                "the mobile interface tells the touch layer an item or a spell is under a finger",
+            ),
+            (
+                "mobileContextButton",
+                "the mobile interface shows the context button by it",
+            ),
+            (
+                "mobileSmartTarget",
+                "the mobile interface retries an action at the nearest enemy by it",
+            ),
+            (
+                "mobileHaptics",
+                "the mobile interface plays no haptic with it off",
+            ),
+            (
+                "mobileHapticButtons",
+                "the mobile interface's button presses tap back by it",
+            ),
+            (
+                "mobileHapticCombat",
+                "the mobile interface's hits and low health thump by it",
+            ),
+            (
+                "mobileSafeArea",
+                "the mobile interface insets UIParent by the safe area with it on",
+            ),
+            (
                 "mobileLayout",
                 "the mobile interface's layout editor saves and loads it",
             ),

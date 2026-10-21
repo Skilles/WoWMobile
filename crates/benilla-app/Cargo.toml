@@ -90,6 +90,7 @@ security-framework = "3"
 objc2 = { version = "0.6", features = ["exception"] }
 objc2-foundation = "0.3"
 objc2-game-controller = "0.3"
+objc2-ui-kit = "0.3"
 
 # Wayland clipboard over the standard `wl_data_device`; arboard's speaks `wlr-data-control`,
 # which GNOME does not implement.

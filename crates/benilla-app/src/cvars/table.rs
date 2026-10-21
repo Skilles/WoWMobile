@@ -832,6 +832,15 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // The mobile fork's settings (`crate::mobile`), its options page's rows. 1.12 has no touch
     // screen, controller or launcher, so none has a reference counterpart.
     ours("mobileTouchControls", "1", MOBILE),
+    // The Assists page (`assets/mobile/MobileAssist.xml`): item gestures, the context button,
+    // smart targeting, haptics and the safe area.
+    ours("mobileItemGestures", "1", MOBILE),
+    ours("mobileContextButton", "1", MOBILE),
+    ours("mobileSmartTarget", "1", MOBILE),
+    ours("mobileHaptics", "1", MOBILE),
+    ours("mobileHapticButtons", "1", MOBILE),
+    ours("mobileHapticCombat", "1", MOBILE),
+    ours("mobileSafeArea", "1", MOBILE),
     // [`crate::mobile::power::FrameCap`]: the Graphics page's Frame Rate Limit, 60 for none.
     ours("mobileMaxFps", "60", MOBILE),
     ours("mobileView", "combat", MOBILE),
