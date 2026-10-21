@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build benilla for the iOS Simulator, wrap it in an .app and launch it.
+# Build WoWMobile (benilla for iOS) for the iOS Simulator, wrap it in an .app and launch it.
 #
 #   ios/run-sim.sh                       # build, install, launch, stream the log
 #   ios/run-sim.sh --no-build            # reinstall and relaunch the last build
@@ -15,7 +15,7 @@ PROFILE="${PROFILE:-release}"
 BUNDLE_ID="${BUNDLE_ID:-dev.benilla.ios}"
 SIM_DEVICE="${SIM_DEVICE:-benilla iPhone 16 Pro Max}"
 WOW_DATA="${WOW_DATA:-$HOME/wow/Data}"
-APP="$ROOT/target/$TARGET/$PROFILE/benilla.app"
+APP="$ROOT/target/$TARGET/$PROFILE/WoWMobile.app"
 
 build=1
 if [[ "${1:-}" == "--no-build" ]]; then
@@ -30,7 +30,7 @@ fi
 bin="$ROOT/target/$TARGET/$PROFILE/benilla"
 rm -rf "$APP"
 mkdir -p "$APP"
-cp "$bin" "$APP/benilla"
+cp "$bin" "$APP/WoWMobile"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
 sed -e "s/\$(PRODUCT_BUNDLE_IDENTIFIER)/$BUNDLE_ID/" \
     -e "s/\$(MARKETING_VERSION)/$version/" \

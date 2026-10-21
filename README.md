@@ -1,3 +1,12 @@
+# WoWMobile
+
+World of Warcraft 1.12.1 on iPhone and iPad: a fork of
+[benilla](https://github.com/samwhosung/benilla) with touch controls, game controller support and a
+launcher for servers and accounts. Building, installing and using it: [ios/README.md](ios/README.md).
+The rest of this page is benilla's own README.
+
+---
+
 <div align="center">
   <h1>benilla</h1>
   <p><b>A complete World of Warcraft 1.12.1 client, written from scratch in Rust and <a href="https://bevy.org">Bevy</a></b></p>

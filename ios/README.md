@@ -1,6 +1,6 @@
-# benilla on iOS
+# WoWMobile
 
-The iOS port: the same client, built for iPhone and iPad, with touch controls, game controllers,
+benilla for iOS: the same client, built for iPhone and iPad, with touch controls, game controllers,
 a launcher for servers and accounts, and the game data in the app's Documents folder. Its
 interface is `crates/benilla-app/assets/mobile` (loaded after benilla's layer when the client is the
 mobile client: on iOS, or on a desktop under `BENILLA_MOBILE=1`); its Rust is
@@ -58,14 +58,14 @@ ios/run-device.sh --copy-data     # also copy ~/wow/Data into the app (first ins
 ios/run-device.sh --no-build      # re-sign and reinstall the last build (e.g. after 7 days)
 ```
 
-The first device build needs the project opened in Xcode once (`open ios/benilla.xcodeproj`, then
+The first device build needs the project opened in Xcode once (`open ios/WoWMobile.xcodeproj`, then
 pick your team under Signing & Capabilities) so Xcode makes the provisioning profile; after that
 the script signs on its own. A free Apple account's profile lasts 7 days: when the app stops
 opening, run `ios/run-device.sh --no-build` from Terminal (if it reports "No Accounts", open the
 project in Xcode once and build there).
 
 The app's Documents folder holds `Data/` (the 1.12.1 install) and `benilla-config/` (settings,
-launcher, addons). Both show in Finder (iPhone > Files > benilla) and the Files app.
+launcher, addons). Both show in Finder (iPhone > Files > WoWMobile) and the Files app.
 
 ## Debugging
 

@@ -1,7 +1,7 @@
-# XcodeGen spec for the iOS app bundle (`xcodegen generate --spec ios/project.yml`). Xcode only
+# XcodeGen spec for WoWMobile, the iOS app bundle (`xcodegen generate --spec ios/project.yml`). Xcode only
 # signs and packages here: the game is cargo's `benilla` binary, built beforehand by
 # ios/run-device.sh and copied over a placeholder executable before Xcode code-signs the bundle.
-name: benilla
+name: WoWMobile
 options:
   bundleIdPrefix: dev.benilla
   deploymentTarget:
@@ -15,7 +15,7 @@ settings:
     # The copy phase reads cargo's target/ folder, outside what a sandboxed script may touch.
     ENABLE_USER_SCRIPT_SANDBOXING: NO
 targets:
-  benilla:
+  WoWMobile:
     type: application
     platform: iOS
     sources:
@@ -26,14 +26,14 @@ targets:
     # landscape, file sharing) and only referenced here.
     settings:
       base:
-        PRODUCT_NAME: benilla
+        PRODUCT_NAME: WoWMobile
         PRODUCT_BUNDLE_IDENTIFIER: $(BENILLA_BUNDLE_ID)
         BENILLA_BUNDLE_ID: dev.benilla.ios
         BENILLA_PROFILE: release
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Info.plist
-        CODE_SIGN_ENTITLEMENTS: benilla.entitlements
+        CODE_SIGN_ENTITLEMENTS: WoWMobile.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SUPPORTS_MACCATALYST: NO
         ONLY_ACTIVE_ARCH: YES

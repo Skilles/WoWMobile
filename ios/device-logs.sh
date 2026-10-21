@@ -15,7 +15,7 @@ fi
 
 if [[ $# == 0 ]]; then
     xcrun devicectl device info files --device "$DEVICE" --domain-type systemCrashLogs 2>/dev/null \
-        | grep -E 'benilla|JetsamEvent' | grep -v Retired
+        | grep -E 'WoWMobile|benilla|JetsamEvent' | grep -v Retired
     exit 0
 fi
 
@@ -29,12 +29,12 @@ head, body = open(sys.argv[1]).read().split("\n", 1)
 d = json.loads(body)
 if "processes" in d:
     page = d.get("memoryStatus", {}).get("pageSize", 16384)
-    ours = [p for p in d["processes"] if "benilla" in p.get("name", "")]
+    ours = [p for p in d["processes"] if p.get("name", "") in ("WoWMobile", "benilla")]
     for p in ours:
         mb = p.get("rpages", 0) * page / 2**20
-        print(f"jetsam: benilla at {mb:.0f} MB, reason {p.get('reason')}")
+        print(f"jetsam: WoWMobile at {mb:.0f} MB, reason {p.get('reason')}")
     if not ours:
-        print("jetsam: benilla is not in this report (iOS reclaimed other apps)")
+        print("jetsam: WoWMobile is not in this report (iOS reclaimed other apps)")
     sys.exit(0)
 print(d.get("exception"), d.get("termination", {}).get("indicator"))
 th = d["threads"][d.get("faultingThread", 0)]

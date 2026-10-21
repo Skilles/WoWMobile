@@ -46,6 +46,7 @@ __pycache__/
 /wow-addons-vanilla
 
 # iOS: the generated Xcode project (ios/project.yml is the source) and your signing team.
+/ios/WoWMobile.xcodeproj
 /ios/benilla.xcodeproj
 /ios/.team
 /ios/Assets.xcassets

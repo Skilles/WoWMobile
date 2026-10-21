@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build benilla for a real iPhone, sign it with your Xcode account's team, install and launch it.
+# Build WoWMobile (benilla for iOS) for a real iPhone, sign it with your Xcode account's team, install and launch it.
 #
 #   TEAM=ABCDE12345 ios/run-device.sh        # build, sign, install, launch
 #   ios/run-device.sh --no-build             # re-sign and reinstall the last cargo build
@@ -69,8 +69,8 @@ fi
 
 DERIVED="$ROOT/target/xcode"
 xcodebuild \
-    -project "$ROOT/ios/benilla.xcodeproj" \
-    -scheme benilla \
+    -project "$ROOT/ios/WoWMobile.xcodeproj" \
+    -scheme WoWMobile \
     -configuration Release \
     -destination "id=$DEVICE" \
     -derivedDataPath "$DERIVED" \
@@ -83,7 +83,7 @@ xcodebuild \
     -quiet \
     build
 
-APP="$DERIVED/Build/Products/Release-iphoneos/benilla.app"
+APP="$DERIVED/Build/Products/Release-iphoneos/WoWMobile.app"
 xcrun devicectl device install app --device "$DEVICE" "$APP"
 
 if [[ $copy_data == 1 ]]; then

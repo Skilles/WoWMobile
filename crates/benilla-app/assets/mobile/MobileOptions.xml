@@ -22,7 +22,7 @@
         BENILLA_MOBILE_TIP_PAD_INVERT = "Push the right stick up to look down."
         BENILLA_MOBILE_TIP_AUTOLOGIN = "Sign in to the last account you used when the game starts."
         BENILLA_MOBILE_TIP_CONSOLE = "Let a computer on your network drive the game through "
-            .. "benilla's remote console, for debugging. Leave it off otherwise."
+            .. "WoWMobile's remote console, for debugging. Leave it off otherwise."
         BENILLA_MOBILE_TIP_DESKTOP = "Not used on this device."
 
         table.insert(BENILLA_OPTIONS_CATEGORY_KEYS, "Mobile")

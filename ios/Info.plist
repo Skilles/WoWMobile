@@ -5,15 +5,15 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>benilla</string>
+	<string>WoWMobile</string>
 	<key>CFBundleExecutable</key>
-	<string>benilla</string>
+	<string>WoWMobile</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>benilla</string>
+	<string>WoWMobile</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -74,7 +74,7 @@
 	<true/>
 	<!-- The realm server is on the LAN. -->
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>benilla connects to your World of Warcraft server on the local network.</string>
+	<string>WoWMobile connects to your World of Warcraft server on the local network.</string>
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>arm64</string>
