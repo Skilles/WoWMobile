@@ -1474,6 +1474,17 @@ impl UiScript {
             .is_some_and(|h| model.arena.frame(h).is_some_and(|f| f.effective_visible))
     }
 
+    /// The focused, visible EditBox's rect in the screen root's units, y up. Host-side only: the
+    /// iOS host keeps it above the on-screen keyboard.
+    pub fn focused_editbox_rect(&self) -> Option<Rect> {
+        let model = self.model_ref();
+        let h = model.focused_editbox?;
+        if !model.arena.frame(h)?.effective_visible {
+            return None;
+        }
+        model.frame_rect(h)
+    }
+
     /// The focused EditBox's name, unfiltered by visibility, unlike [`Self::has_keyboard_focus`].
     /// Host-side only: 1.12's EditBox table has `SetFocus`/`ClearFocus` and no getter.
     pub fn focused_editbox_name(&self) -> Option<String> {
